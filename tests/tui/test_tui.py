@@ -174,3 +174,78 @@ class TestAppBindings:
 
         switch_bindings = [b for b in app.BINDINGS if "switch_tab" in b.action]
         assert len(switch_bindings) == 5, f"Expected 5 tab bindings, got {len(switch_bindings)}"
+
+
+class TestProgressAccumulation:
+    """Verify multi-stage progress tracking auto-completes earlier stages."""
+
+    STAGE_ORDER = {
+        "search": 0, "loading": 1, "paper_text": 2, "github": 3,
+        "evaluate": 4, "extract": 5, "generating": 6, "saving": 7,
+        "done": 8, "error": 99, "waiting_input": 99,
+    }
+
+    def _apply_stage(self, stages, source, stage, pct, msg=""):
+        """Simulate the core stage-accumulation logic from update_progress."""
+        incoming_order = self.STAGE_ORDER.get(stage, 50)
+        for s, info in stages.items():
+            existing_order = self.STAGE_ORDER.get(s, 50)
+            if existing_order < incoming_order and info["status"] == "⟳":
+                info["status"] = "✓"
+
+        status = "✓" if pct >= 1.0 else ("✗" if stage == "error" else "⟳")
+        stages[stage] = {
+            "msg": msg or stage,
+            "pct": f"{int(pct * 100)}%",
+            "status": status,
+        }
+        return stages
+
+    def test_earlier_stages_auto_complete_on_new_stage(self):
+        stages = {}
+        self._apply_stage(stages, "impl", "loading", 0.05)
+        self._apply_stage(stages, "impl", "paper_text", 0.08)
+        self._apply_stage(stages, "impl", "github", 0.12)
+        self._apply_stage(stages, "impl", "generating", 0.30)
+
+        assert stages["loading"]["status"] == "✓"
+        assert stages["paper_text"]["status"] == "✓"
+        assert stages["github"]["status"] == "✓"
+        assert stages["generating"]["status"] == "⟳"
+
+    def test_done_stage_shows_checkmark(self):
+        stages = {}
+        self._apply_stage(stages, "impl", "loading", 0.05)
+        self._apply_stage(stages, "impl", "generating", 0.30)
+        self._apply_stage(stages, "impl", "done", 1.0)
+
+        assert stages["loading"]["status"] == "✓"
+        assert stages["generating"]["status"] == "✓"
+        assert stages["done"]["status"] == "✓"
+
+    def test_error_stage_shows_cross(self):
+        stages = {}
+        self._apply_stage(stages, "impl", "loading", 0.05)
+        self._apply_stage(stages, "impl", "error", 0.0)
+
+        assert stages["loading"]["status"] == "✓"
+        assert stages["error"]["status"] == "✗"
+
+    def test_stage_at_100_percent_shows_done(self):
+        stages = {}
+        self._apply_stage(stages, "impl", "saving", 1.0)
+        assert stages["saving"]["status"] == "✓"
+
+    def test_same_stage_repeated_updates_status(self):
+        stages = {}
+
+        self._apply_stage(stages, "impl", "generating", 0.30, msg="Starting...")
+        assert stages["generating"]["status"] == "⟳"
+        assert "Starting" in stages["generating"]["msg"]
+
+        self._apply_stage(stages, "impl", "generating", 0.60, msg="Still going...")
+        assert stages["generating"]["status"] == "⟳"
+        assert "Still going" in stages["generating"]["msg"]
+
+        self._apply_stage(stages, "impl", "generating", 1.0, msg="Done!")
+        assert stages["generating"]["status"] == "✓"

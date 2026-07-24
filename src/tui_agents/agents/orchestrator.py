@@ -74,8 +74,12 @@ class Orchestrator:
         self,
         paper_id: str,
         progress: ProgressFn | None = None,
+        github_url: str | None = None,
+        skip_eval: bool = False,
     ) -> Implementation | None:
-        return await self.implementer.implement(paper_id, progress=progress)
+        return await self.implementer.implement(
+            paper_id, progress=progress, github_url=github_url, skip_eval=skip_eval
+        )
 
     async def prototype_paper(
         self,
@@ -83,6 +87,37 @@ class Orchestrator:
         progress: ProgressFn | None = None,
     ) -> dict[str, Any] | None:
         return await self.prototyper.prototype(paper_id, progress=progress)
+
+    async def delete_paper(self, paper_id: str) -> None:
+        import shutil
+        from pathlib import Path
+
+        paper = await self.db.get_paper(paper_id)
+        if not paper:
+            return
+
+        try:
+            self.vector_store.delete_by_paper(paper_id)
+        except Exception:
+            pass
+
+        await self.db.delete_paper(paper_id)
+
+        if paper.pdf_path:
+            try:
+                pdf = Path(paper.pdf_path)
+                if pdf.exists():
+                    pdf.unlink()
+                pdf.parent.rmdir() if pdf.parent.exists() and not any(pdf.parent.iterdir()) else None
+            except Exception:
+                pass
+
+        code_dir = Path(self.config.code_dir) / paper_id
+        if code_dir.exists():
+            try:
+                shutil.rmtree(str(code_dir))
+            except Exception:
+                pass
 
     async def run_pipeline(
         self,

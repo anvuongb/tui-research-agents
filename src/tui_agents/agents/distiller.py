@@ -76,7 +76,10 @@ class DistillerAgent(BaseAgent):
             if progress:
                 await progress("analyzing", f"Analyzing paper ({token_estimate} tokens, {len(paper_text)} chars)...", 0.1)
 
-            distillation = await self._run_llm_distillation(paper.title, paper_text, paper_id, progress)
+            distillation = await self._run_with_heartbeat(
+                self._run_llm_distillation(paper.title, paper_text, paper_id, progress),
+                progress, "analyzing",
+            )
 
             if distillation:
                 distillation.id = str(uuid.uuid4())

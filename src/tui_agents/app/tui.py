@@ -34,7 +34,7 @@ TabbedContent {
 }
 
 TabPane {
-    padding: 1 2;
+    padding: 0 2;
 }
 
 #dashboard-screen, #papers-screen, #pipeline-screen, #benchmarks-screen, #config-screen {
@@ -64,7 +64,7 @@ TabPane {
 .section-title {
     color: $primary;
     text-style: bold;
-    padding: 1 0;
+    padding: 0;
 }
 
 .card {
@@ -119,30 +119,64 @@ Button {
 
 DataTable {
     height: 1fr;
-    min-height: 8;
-    margin: 1 0;
 }
 
 #search-input {
     width: 100%;
-    margin: 0 0 1 0;
     border: solid $accent;
+    margin: 0;
 }
 
 #progress-label {
     color: $primary;
-    padding: 1 2;
+    padding: 0 1;
     background: $panel;
-    margin: 1 0;
+    min-height: 1;
+    max-height: 12;
+    margin: 0;
+}
+
+#search-bar {
+    margin: 0;
+    height: auto;
 }
 
 #detail-panel {
     background: $panel;
     padding: 1 2;
-    margin: 1 0;
     border: solid $primary-background;
-    max-height: 20;
-    overflow-y: auto;
+    height: 1fr;
+}
+
+#content-area {
+    height: 1fr;
+    margin: 1 0;
+}
+
+#content-area DataTable {
+    width: 3fr;
+}
+
+#content-area #detail-panel {
+    width: 2fr;
+}
+
+#impl-controls {
+    height: auto;
+    max-height: 5;
+    min-height: 1;
+}
+
+#impl-controls Button {
+    width: auto;
+    # max-width: 5;
+    min-width: 1;
+    padding: 0 1;
+}
+
+#impl-controls Static {
+    width: auto;
+    padding: 0 1;
 }
 
 #detail-title {
@@ -158,6 +192,13 @@ DataTable {
 #action-bar {
     padding: 1 0;
     background: $panel;
+    max-height: 10%;
+}
+
+#search-bar {
+    padding: 1 0;
+    background: $panel;
+    max-height: 20%;
 }
 
 .error-text {

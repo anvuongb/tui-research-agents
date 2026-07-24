@@ -77,7 +77,10 @@ class PrototyperAgent(BaseAgent):
             if progress:
                 await progress("generating", "Creating runnable prototype...", 0.1)
 
-            result = await self._run_llm_prototype(implementation, paper_id, progress)
+            result = await self._run_with_heartbeat(
+                self._run_llm_prototype(implementation, paper_id, progress),
+                progress, "generating",
+            )
 
             if result:
                 await self.db.update_paper_status(paper_id, "prototyped")
@@ -110,7 +113,7 @@ class PrototyperAgent(BaseAgent):
         dest_dir = self._code_dir / paper_id
         dest_dir.mkdir(parents=True, exist_ok=True)
 
-        script = result.get("script", "")
+        script = self.strip_code_fences(result.get("script", ""))
         if script:
             script_path = dest_dir / "prototype.py"
             script_path.write_text(script)

@@ -80,6 +80,13 @@ CREATE TABLE IF NOT EXISTS benchmark_results (
     created_at TEXT NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS github_cache (
+    query_key TEXT PRIMARY KEY,
+    results TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    ttl_seconds INTEGER DEFAULT 86400
+);
+
 CREATE INDEX IF NOT EXISTS idx_agent_runs_paper ON agent_runs(paper_id);
 CREATE INDEX IF NOT EXISTS idx_agent_runs_type ON agent_runs(agent_type);
 CREATE INDEX IF NOT EXISTS idx_papers_status ON papers(status);
@@ -330,7 +337,7 @@ class Database:
     async def save_implementation(self, impl: Implementation) -> None:
         conn = await self._ensure_connected()
         await conn.execute(
-            """INSERT OR REPLACE INTO implementations
+            """INSERT INTO implementations
                (id, paper_id, run_id, code, language, dependencies, tests, created_at)
                VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
             (
@@ -350,6 +357,30 @@ class Database:
         if not rows:
             return None
         return _row_to_implementation(tuple(rows[0]))
+
+    async def get_implementation_by_id(self, impl_id: str) -> Implementation | None:
+        conn = await self._ensure_connected()
+        cursor = await conn.execute(
+            "SELECT * FROM implementations WHERE id = ?", (impl_id,)
+        )
+        rows = await cursor.fetchall()
+        if not rows:
+            return None
+        return _row_to_implementation(tuple(rows[0]))
+
+    async def list_implementations(self, paper_id: str) -> list[Implementation]:
+        conn = await self._ensure_connected()
+        cursor = await conn.execute(
+            "SELECT * FROM implementations WHERE paper_id = ? ORDER BY created_at DESC",
+            (paper_id,),
+        )
+        rows = await cursor.fetchall()
+        return [_row_to_implementation(tuple(r)) for r in rows]
+
+    async def delete_implementation(self, impl_id: str) -> None:
+        conn = await self._ensure_connected()
+        await conn.execute("DELETE FROM implementations WHERE id = ?", (impl_id,))
+        await conn.commit()
 
     async def save_benchmark(self, b: BenchmarkResult) -> None:
         conn = await self._ensure_connected()
@@ -385,3 +416,39 @@ class Database:
         if not rows:
             return None
         return _row_to_benchmark(tuple(rows[0]))
+
+    async def get_cached_github(self, query_key: str) -> list | None:
+        conn = await self._ensure_connected()
+        await conn.execute(
+            "DELETE FROM github_cache WHERE created_at < datetime('now', '-' || ttl_seconds || ' seconds')"
+        )
+        await conn.commit()
+        cursor = await conn.execute(
+            "SELECT results FROM github_cache WHERE query_key = ?", (query_key,)
+        )
+        row = await cursor.fetchone()
+        if row:
+            return json.loads(row[0])
+        return None
+
+    async def set_cached_github(self, query_key: str, results: list, ttl_seconds: int = 86400) -> None:
+        conn = await self._ensure_connected()
+        await conn.execute(
+            "INSERT OR REPLACE INTO github_cache (query_key, results, created_at, ttl_seconds) VALUES (?, ?, datetime('now'), ?)",
+            (query_key, json.dumps(results), ttl_seconds),
+        )
+        await conn.commit()
+
+    async def clear_github_cache(self) -> None:
+        conn = await self._ensure_connected()
+        await conn.execute("DELETE FROM github_cache")
+        await conn.commit()
+
+    async def delete_paper(self, paper_id: str) -> None:
+        conn = await self._ensure_connected()
+        await conn.execute("DELETE FROM benchmark_results WHERE paper_id = ?", (paper_id,))
+        await conn.execute("DELETE FROM implementations WHERE paper_id = ?", (paper_id,))
+        await conn.execute("DELETE FROM distillations WHERE paper_id = ?", (paper_id,))
+        await conn.execute("DELETE FROM agent_runs WHERE paper_id = ?", (paper_id,))
+        await conn.execute("DELETE FROM papers WHERE id = ?", (paper_id,))
+        await conn.commit()

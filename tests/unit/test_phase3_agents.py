@@ -81,7 +81,7 @@ class TestImplementerFileSave:
         )
         agent._save_code_file("paper-test", impl)
 
-        dest = agent._code_dir / "paper-test"
+        dest = agent._code_dir / "paper-test" / impl.id[:8]
         assert (dest / "implementation.py").exists()
         assert (dest / "test_implementation.py").exists()
         assert (dest / "requirements.txt").exists()
@@ -108,7 +108,7 @@ class TestImplementerFileSave:
         )
         agent._save_code_file("paper-nt", impl)
 
-        dest = agent._code_dir / "paper-nt"
+        dest = agent._code_dir / "paper-nt" / impl.id[:8]
         assert (dest / "implementation.py").exists()
         assert not (dest / "test_implementation.py").exists()
 

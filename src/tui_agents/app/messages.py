@@ -29,3 +29,11 @@ class DistillationReady(Message, bubble=True):
         self.paper_id = paper_id
         self.distillation = distillation
         super().__init__()
+
+
+class ImplementationReady(Message, bubble=True):
+    def __init__(self, paper_id: str, code_length: int, dependencies: list[str]):
+        self.paper_id = paper_id
+        self.code_length = code_length
+        self.dependencies = dependencies
+        super().__init__()

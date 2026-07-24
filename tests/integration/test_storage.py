@@ -277,3 +277,166 @@ class TestBenchmarks:
         latest = await test_db.get_latest_benchmark("latest-bench")
         assert latest is not None
         assert latest.id == "new-bench"
+
+
+@pytest.mark.integration
+class TestMultiImplementation:
+    @pytest.mark.asyncio
+    async def test_multiple_implementations_per_paper(self, test_db: Database):
+        from tui_agents.storage.models import Implementation
+
+        impl1 = Implementation(
+            id="impl-v1", paper_id="multi-impl", run_id="r1",
+            code="print('v1')", dependencies=["torch"],
+        )
+        impl2 = Implementation(
+            id="impl-v2", paper_id="multi-impl", run_id="r2",
+            code="print('v2')", dependencies=["torch", "numpy"],
+        )
+
+        await test_db.save_implementation(impl1)
+        await test_db.save_implementation(impl2)
+
+        impls = await test_db.list_implementations("multi-impl")
+        assert len(impls) == 2
+        assert impls[0].id == "impl-v2"  # latest first
+        assert impls[1].id == "impl-v1"
+
+    @pytest.mark.asyncio
+    async def test_get_implementation_returns_latest(self, test_db: Database):
+        from tui_agents.storage.models import Implementation
+
+        await test_db.save_implementation(Implementation(
+            id="old", paper_id="latest-test", run_id="r1", code="old",
+        ))
+        await test_db.save_implementation(Implementation(
+            id="new", paper_id="latest-test", run_id="r2", code="new",
+        ))
+
+        latest = await test_db.get_implementation("latest-test")
+        assert latest is not None
+        assert latest.id == "new"
+
+    @pytest.mark.asyncio
+    async def test_get_implementation_by_id(self, test_db: Database):
+        from tui_agents.storage.models import Implementation
+
+        await test_db.save_implementation(Implementation(
+            id="specific-impl", paper_id="by-id", run_id="r1", code="x",
+        ))
+
+        impl = await test_db.get_implementation_by_id("specific-impl")
+        assert impl is not None
+        assert impl.code == "x"
+
+    @pytest.mark.asyncio
+    async def test_delete_implementation(self, test_db: Database):
+        from tui_agents.storage.models import Implementation
+
+        await test_db.save_implementation(Implementation(
+            id="to-delete", paper_id="del-test", run_id="r1", code="x",
+        ))
+
+        await test_db.delete_implementation("to-delete")
+
+        impls = await test_db.list_implementations("del-test")
+        assert len(impls) == 0
+
+    @pytest.mark.asyncio
+    async def test_delete_one_keeps_others(self, test_db: Database):
+        from tui_agents.storage.models import Implementation
+
+        await test_db.save_implementation(Implementation(
+            id="keep", paper_id="keep-test", run_id="r1", code="keep",
+        ))
+        await test_db.save_implementation(Implementation(
+            id="remove", paper_id="keep-test", run_id="r2", code="remove",
+        ))
+
+        await test_db.delete_implementation("remove")
+        impls = await test_db.list_implementations("keep-test")
+        assert len(impls) == 1
+        assert impls[0].id == "keep"
+
+
+@pytest.mark.integration
+class TestCascadeDelete:
+    @pytest.mark.asyncio
+    async def test_delete_paper_cascades_to_all_tables(self, test_db: Database):
+        from tui_agents.storage.models import (
+            AgentRun, AgentType, BenchmarkResult, Distillation,
+            Implementation, Paper, PaperSource, StageStatus,
+        )
+
+        paper_id = "cascade-delete-test"
+        await test_db.upsert_paper(Paper(
+            id=paper_id, source=PaperSource.ARXIV, source_id="cd.1",
+            title="Cascade Test", authors=["A"], status="implemented",
+            pdf_path="data/papers/cascade/test.pdf",
+        ))
+        await test_db.save_distillation(Distillation(
+            id="cd-dist", paper_id=paper_id, run_id="r1",
+            summary="Summary", methodology="Methods", contributions=["C1"],
+        ))
+        await test_db.save_implementation(Implementation(
+            id="cd-impl-1", paper_id=paper_id, run_id="r1", code="x",
+        ))
+        await test_db.save_implementation(Implementation(
+            id="cd-impl-2", paper_id=paper_id, run_id="r2", code="y",
+        ))
+        await test_db.create_agent_run(AgentRun(
+            id="cd-run", paper_id=paper_id, agent_type=AgentType.DISTILLER,
+            status=StageStatus.COMPLETED,
+        ))
+        await test_db.save_benchmark(BenchmarkResult(
+            id="cd-bench", paper_id=paper_id, run_id="cd-run",
+            metrics={"score": 0.9},
+        ))
+
+        # Verify data exists before delete
+        assert await test_db.get_paper(paper_id) is not None
+        assert await test_db.get_distillation(paper_id) is not None
+        assert len(await test_db.list_implementations(paper_id)) == 2
+        assert len(await test_db.get_runs_for_paper(paper_id)) == 1
+        assert len(await test_db.get_benchmarks(paper_id)) == 1
+
+        await test_db.delete_paper(paper_id)
+
+        # Verify everything is deleted
+        assert await test_db.get_paper(paper_id) is None
+        assert await test_db.get_distillation(paper_id) is None
+        assert len(await test_db.list_implementations(paper_id)) == 0
+        assert len(await test_db.get_runs_for_paper(paper_id)) == 0
+        assert len(await test_db.get_benchmarks(paper_id)) == 0
+
+    @pytest.mark.asyncio
+    async def test_delete_nonexistent_paper_no_error(self, test_db: Database):
+        await test_db.delete_paper("does-not-exist")
+
+    @pytest.mark.asyncio
+    async def test_delete_paper_does_not_affect_other_papers(self, test_db: Database):
+        from tui_agents.storage.models import (
+            Implementation, Paper, PaperSource,
+        )
+
+        await test_db.upsert_paper(Paper(
+            id="keeper", source=PaperSource.ARXIV, source_id="k.1",
+            title="Keeper", authors=["A"],
+        ))
+        await test_db.save_implementation(Implementation(
+            id="keep-impl", paper_id="keeper", run_id="r1", code="keep",
+        ))
+        await test_db.upsert_paper(Paper(
+            id="removed", source=PaperSource.ARXIV, source_id="r.1",
+            title="Removed", authors=["B"],
+        ))
+        await test_db.save_implementation(Implementation(
+            id="del-impl", paper_id="removed", run_id="r1", code="del",
+        ))
+
+        await test_db.delete_paper("removed")
+
+        assert await test_db.get_paper("keeper") is not None
+        assert len(await test_db.list_implementations("keeper")) == 1
+        assert await test_db.get_paper("removed") is None
+        assert len(await test_db.list_implementations("removed")) == 0

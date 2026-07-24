@@ -1,10 +1,12 @@
 from __future__ import annotations
 
+import asyncio
 import json
+import time
 import uuid
 from abc import ABC, abstractmethod
 from datetime import datetime
-from typing import Any
+from typing import Any, Callable, Coroutine
 
 from tui_agents.llm.client import LLMClient, LLMResponse
 from tui_agents.storage.database import Database
@@ -16,6 +18,43 @@ class BaseAgent(ABC):
         self.llm = llm
         self.db = database
         self._current_run: AgentRun | None = None
+
+    @staticmethod
+    def strip_code_fences(text: str) -> str:
+        import re
+        text = text.strip()
+        text = re.sub(r"^\s*```(?:python|py|Python|Py)?\s*\n?", "", text, flags=re.IGNORECASE)
+        text = re.sub(r"\n?\s*```\s*$", "", text)
+        return text.strip()
+
+    async def _run_with_heartbeat(
+        self,
+        coro: Coroutine[Any, Any, Any],
+        progress: Callable[[str, str, float], Coroutine[Any, Any, None]] | None,
+        stage: str,
+        pct: float = 0.3,
+    ) -> Any:
+        start = time.monotonic()
+        heartbeat_task: asyncio.Task | None = None
+
+        async def _heartbeat() -> None:
+            while True:
+                await asyncio.sleep(5.0)
+                elapsed = int(time.monotonic() - start)
+                if progress:
+                    await progress(stage, f"Still running... ({elapsed}s elapsed)", pct + min(elapsed * 0.01, 0.5))
+
+        if progress:
+            heartbeat_task = asyncio.create_task(_heartbeat())
+        try:
+            return await coro
+        finally:
+            if heartbeat_task:
+                heartbeat_task.cancel()
+                try:
+                    await heartbeat_task
+                except asyncio.CancelledError:
+                    pass
 
     @property
     @abstractmethod

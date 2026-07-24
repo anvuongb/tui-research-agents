@@ -89,6 +89,7 @@ class LLMClient:
         user_prompt: str,
         response_schema: dict[str, Any],
         temperature: float | None = None,
+        max_tokens: int | None = None,
     ) -> dict[str, Any]:
         messages = [
             {"role": "system", "content": system_prompt},
@@ -99,7 +100,7 @@ class LLMClient:
             "model": self._model,
             "messages": messages,
             "temperature": temperature if temperature is not None else self._temperature,
-            "max_tokens": self._max_tokens,
+            "max_tokens": max_tokens or self._max_tokens,
         }
 
         response_format = None

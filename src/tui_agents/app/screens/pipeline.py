@@ -54,15 +54,24 @@ class PipelineScreen(Vertical):
         stage_map = {
             "search": "collector",
             "collect": "collector",
+            "collecting": "collector",
             "extract": "collector",
             "download": "collector",
+            "chunk": "collector",
             "embed": "collector",
             "distill": "distiller",
             "loading": "distiller",
             "analyzing": "distiller",
-            "implement": "implementer",
+            "paper_text": "implementer",
+            "github": "implementer",
+            "evaluate": "implementer",
             "generating": "implementer",
+            "saving": "implementer",
+            "implement": "implementer",
             "prototype": "prototyper",
+            "pipeline": "orchestrator",
+            "done": "orchestrator",
+            "error": "orchestrator",
         }
 
         stage_id = stage_map.get(message.stage)
