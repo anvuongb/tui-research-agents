@@ -25,14 +25,23 @@ class LLMClient:
         base_url = config.llm_base_url.rstrip("/")
         api_key = config.llm_api_key
 
-        self._client = AsyncOpenAI(
-            base_url=base_url,
-            api_key=api_key,
-            timeout=config.llm_timeout,
-        )
+        self._base_url = base_url
+        self._api_key = api_key
+        self._timeout = config.llm_timeout
         self._model = config.llm_model
         self._temperature = config.llm_temperature
         self._max_tokens = config.llm_max_tokens
+        self._client: AsyncOpenAI | None = None
+
+    def _get_client(self) -> AsyncOpenAI:
+        if self._client is None:
+            api_key = self._api_key or "not-configured"
+            self._client = AsyncOpenAI(
+                base_url=self._base_url,
+                api_key=api_key,
+                timeout=self._timeout,
+            )
+        return self._client
 
     @property
     def model_name(self) -> str:
@@ -57,7 +66,7 @@ class LLMClient:
             kwargs["tools"] = tools
             kwargs["tool_choice"] = tool_choice
 
-        response = await self._client.chat.completions.create(**kwargs)
+        response = await self._get_client().chat.completions.create(**kwargs)
         choice = response.choices[0]
         message = choice.message
 
@@ -115,7 +124,7 @@ class LLMClient:
                 f"{user_prompt}\n\nRespond with valid JSON matching the required schema."
             )
 
-        response = await self._client.chat.completions.create(**kwargs)
+        response = await self._get_client().chat.completions.create(**kwargs)
         content = response.choices[0].message.content or "{}"
 
         import json

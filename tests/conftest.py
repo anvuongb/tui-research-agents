@@ -65,6 +65,7 @@ async def test_vector_store(tmp_config: Config) -> AsyncGenerator[VectorStore, N
 
 @pytest_asyncio.fixture
 async def test_llm(tmp_config: Config) -> LLMClient:
+    tmp_config._data.setdefault("llm", {})["api_key"] = "test-key-not-real"
     return LLMClient(tmp_config)
 
 

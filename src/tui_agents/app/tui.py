@@ -119,6 +119,7 @@ Button {
 
 DataTable {
     height: 1fr;
+    min-height: 8;
     margin: 1 0;
 }
 

@@ -13,6 +13,7 @@ sources:
     enabled: true
     max_results: 20
     delay_between_requests: 3.0
+    category_filter: "cat:cs.LG OR cat:cs.AI OR cat:cs.CV OR cat:stat.ML"
   semantic_scholar:
     enabled: true
     api_key: "${SEMANTIC_SCHOLAR_API_KEY}"

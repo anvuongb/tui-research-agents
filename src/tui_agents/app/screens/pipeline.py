@@ -1,46 +1,44 @@
 from textual import on
 from textual.app import ComposeResult
 from textual.containers import Container, Horizontal, Vertical
-from textual.widget import Widget
 from textual.widgets import Button, Label, Static
 
 from tui_agents.app.messages import DistillationReady, PapersUpdated, ProgressUpdate
 
 
-class PipelineScreen(Widget):
+class PipelineScreen(Vertical):
     id = "pipeline-screen"
 
     def compose(self) -> ComposeResult:
-        with Container(classes="container"):
-            yield Static("Pipeline", classes="section-title")
+        yield Static("Pipeline", classes="section-title")
 
+        with Container(classes="card"):
+            yield Static("Active Pipeline", classes="card-title")
+            yield Static("")
+            yield Label("No pipeline runs active", id="pipeline-status")
+
+        yield Static("Pipeline Stages", classes="section-title")
+
+        stages = [
+            ("collector", "Collector", "Fetch papers from arXiv, Semantic Scholar, or local PDFs"),
+            ("distiller", "Distiller", "Extract key insights, methodology, and contributions"),
+            ("implementer", "Implementer", "Generate Python implementation code"),
+            ("prototyper", "Prototyper", "Create runnable prototype scripts"),
+            ("benchmarker", "Benchmarker", "Run benchmarks and evaluate results"),
+        ]
+
+        for stage_id, name, desc in stages:
             with Container(classes="card"):
-                yield Static("Active Pipeline", classes="card-title")
-                yield Static("")
-                yield Label("No pipeline runs active", id="pipeline-status")
+                with Horizontal():
+                    yield Static(f"⬇ {name}", classes="card-title status-pending", id=f"stage-title-{stage_id}")
+                yield Static(f"  {desc}", classes="card-subtitle")
+                yield Static(" Status: pending", id=f"stage-status-{stage_id}", classes="list-item")
 
-            yield Static("Pipeline Stages", classes="section-title")
+        yield Static("Actions", classes="section-title")
 
-            stages = [
-                ("collector", "Collector", "Fetch papers from arXiv, Semantic Scholar, or local PDFs"),
-                ("distiller", "Distiller", "Extract key insights, methodology, and contributions"),
-                ("implementer", "Implementer", "Generate Python implementation code"),
-                ("prototyper", "Prototyper", "Create runnable prototype scripts"),
-                ("benchmarker", "Benchmarker", "Run benchmarks and evaluate results"),
-            ]
-
-            for stage_id, name, desc in stages:
-                with Container(classes="card"):
-                    with Horizontal():
-                        yield Static(f"⬇ {name}", classes="card-title status-pending", id=f"stage-title-{stage_id}")
-                    yield Static(f"  {desc}", classes="card-subtitle")
-                    yield Static(" Status: pending", id=f"stage-status-{stage_id}", classes="list-item")
-
-            yield Static("Actions", classes="section-title")
-
-            with Horizontal(id="pipeline-actions"):
-                yield Button("Run Full Pipeline", id="run-pipeline-btn", variant="primary", disabled=True)
-                yield Button("Run Next Stage", id="run-next-btn", variant="warning", disabled=True)
+        with Horizontal(id="pipeline-actions"):
+            yield Button("Run Full Pipeline", id="run-pipeline-btn", variant="primary", disabled=True)
+            yield Button("Run Next Stage", id="run-next-btn", variant="warning", disabled=True)
 
     def on_mount(self) -> None:
         self._update_stage_statuses("collector", "Ready")

@@ -85,12 +85,18 @@ class CollectorAgent(BaseAgent):
 
         if "arxiv" in sources and self.config.arxiv_enabled:
             if progress:
-                await progress("search", "Searching arXiv...", 0.1)
+                await progress("search", "Searching arXiv (may take a moment)...", 0.05)
             try:
-                arxiv_results = await asyncio.to_thread(
-                    self.arxiv.search_sync, query, max_results
+                arxiv_results = await asyncio.wait_for(
+                    asyncio.to_thread(self.arxiv.search_sync, query, max_results),
+                    timeout=30.0,
                 )
                 all_results.extend(arxiv_results)
+                if progress:
+                    await progress("search", f"arXiv returned {len(arxiv_results)} results", 0.25)
+            except asyncio.TimeoutError:
+                if progress:
+                    await progress("search", "arXiv search timed out (30s)", 0.1)
             except Exception as e:
                 if progress:
                     await progress("search", f"arXiv search failed: {e}", 0.1)
@@ -99,8 +105,16 @@ class CollectorAgent(BaseAgent):
             if progress:
                 await progress("search", "Searching Semantic Scholar...", 0.3)
             try:
-                ss_results = await self.semantic_scholar.search(query, max_results)
+                ss_results = await asyncio.wait_for(
+                    self.semantic_scholar.search(query, max_results),
+                    timeout=30.0,
+                )
                 all_results.extend(ss_results)
+                if progress:
+                    await progress("search", f"Semantic Scholar returned {len(ss_results)} results", 0.45)
+            except asyncio.TimeoutError:
+                if progress:
+                    await progress("search", "Semantic Scholar search timed out (30s)", 0.3)
             except Exception as e:
                 if progress:
                     await progress("search", f"Semantic Scholar search failed: {e}", 0.3)
@@ -225,7 +239,7 @@ class CollectorAgent(BaseAgent):
 
     async def _download_pdf(self, pdf_url: str, paper_id: str) -> str | None:
         try:
-            import asyncio
+            import re
 
             import httpx
 
@@ -236,21 +250,30 @@ class CollectorAgent(BaseAgent):
                 arxiv_id = pdf_url.rstrip("/").split("/")[-1]
                 if arxiv_id.endswith(".pdf"):
                     arxiv_id = arxiv_id[:-4]
-                import re
                 arxiv_id = re.sub(r"v\d+$", "", arxiv_id)
-                async with httpx.AsyncClient(timeout=120.0, follow_redirects=True) as client:
-                    resp = await client.get(pdf_url)
+                async with httpx.AsyncClient(timeout=60.0, follow_redirects=True) as client:
+                    resp = await asyncio.wait_for(
+                        client.get(pdf_url),
+                        timeout=60.0,
+                    )
                     resp.raise_for_status()
                     dest_path = dest_dir / f"{arxiv_id}.pdf"
                     dest_path.write_bytes(resp.content)
                     return str(dest_path)
             else:
-                async with httpx.AsyncClient(timeout=120.0, follow_redirects=True) as client:
-                    resp = await client.get(pdf_url)
+                async with httpx.AsyncClient(timeout=60.0, follow_redirects=True) as client:
+                    resp = await asyncio.wait_for(
+                        client.get(pdf_url),
+                        timeout=60.0,
+                    )
                     resp.raise_for_status()
-                    dest_path = dest_dir / f"paper.pdf"
+                    dest_path = dest_dir / "paper.pdf"
                     dest_path.write_bytes(resp.content)
                     return str(dest_path)
+        except asyncio.TimeoutError:
+            from tui_agents.utils.logging import get_logger
+            get_logger().warning(f"PDF download timed out (60s): {pdf_url}")
+            return None
         except Exception as e:
             from tui_agents.utils.logging import get_logger
             get_logger().warning(f"PDF download failed for {pdf_url}: {e}")

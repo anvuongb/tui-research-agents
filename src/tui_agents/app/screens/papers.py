@@ -2,7 +2,6 @@ from textual import on
 from textual.app import ComposeResult
 from textual.containers import Container, Horizontal, Vertical
 from textual.message import Message
-from textual.widget import Widget
 from textual.widgets import Button, DataTable, Input, Label, Static
 
 from tui_agents.app.messages import (
@@ -14,7 +13,7 @@ from tui_agents.app.messages import (
 from tui_agents.sources.arxiv import SearchResult
 
 
-class PapersScreen(Widget):
+class PapersScreen(Vertical):
     id = "papers-screen"
 
     def __init__(self):
@@ -23,32 +22,31 @@ class PapersScreen(Widget):
         self._selected_index: int = -1
 
     def compose(self) -> ComposeResult:
-        with Container(classes="container"):
-            yield Label("Search", classes="section-title")
-            yield Input(
-                placeholder="Type a query (e.g. diffusion models optimal transport) and press Enter...",
-                id="search-input",
-            )
-            with Horizontal(id="search-bar"):
-                yield Button("Search", id="search-btn", variant="primary")
-                yield Button("Collect All", id="collect-all-btn", variant="success")
-                yield Button("Clear", id="clear-btn", variant="default")
+        yield Label("Search", classes="section-title")
+        yield Input(
+            placeholder="Type a query (e.g. diffusion models optimal transport) and press Enter...",
+            id="search-input",
+        )
+        with Horizontal(id="search-bar"):
+            yield Button("Search", id="search-btn", variant="primary")
+            yield Button("Collect All", id="collect-all-btn", variant="success")
+            yield Button("Clear", id="clear-btn", variant="default")
 
-            yield Label("Click the search bar above, type a query, and press Enter to search", id="progress-label")
+        yield Label("Click the search bar above, type a query, and press Enter to search", id="progress-label")
 
-            yield DataTable(id="papers-table", cursor_type="row")
+        yield DataTable(id="papers-table", cursor_type="row")
 
-            with Container(id="detail-panel"):
-                yield Label("Select a paper to view details", id="detail-title")
-                yield Static("", id="detail-authors")
-                yield Static("", id="detail-year")
-                yield Static("", id="detail-source")
-                yield Static("", id="detail-abstract")
+        with Vertical(id="detail-panel"):
+            yield Label("Select a paper to view details", id="detail-title")
+            yield Static("", id="detail-authors")
+            yield Static("", id="detail-year")
+            yield Static("", id="detail-source")
+            yield Static("", id="detail-abstract")
 
-            with Horizontal(id="action-bar"):
-                yield Button("Collect Selected", id="collect-btn", variant="primary")
-                yield Button("Distill Selected", id="distill-btn", variant="warning")
-                yield Button("Refresh Library", id="refresh-btn", variant="default")
+        with Horizontal(id="action-bar"):
+            yield Button("Collect Selected", id="collect-btn", variant="primary")
+            yield Button("Distill Selected", id="distill-btn", variant="warning")
+            yield Button("Refresh Library", id="refresh-btn", variant="default")
 
     def on_mount(self) -> None:
         table = self.query_one("#papers-table", DataTable)
@@ -262,12 +260,15 @@ class PapersScreen(Widget):
                 title,
                 result.source,
                 result.published_date or "N/A",
-                f"⚪ search result",
+                f"   search result",
                 key=f"search-{i}",
             )
 
         label = self.query_one("#progress-label", Label)
-        label.update(f"Found {len(message.results)} papers. Click 'Collect All' to download and process.")
+        if message.results:
+            label.update(f"Found {len(message.results)} papers. Click 'Collect All' to download and process.")
+        else:
+            label.update(f"No papers found. The search source may be unreachable or rate-limited.")
 
     async def on_papers_updated(self, message: PapersUpdated) -> None:
         await self._refresh_library()

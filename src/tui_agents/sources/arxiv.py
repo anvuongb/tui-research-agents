@@ -22,18 +22,27 @@ class SearchResult:
     doi: str | None = None
 
 
+_CAT_FILTER = "cat:cs.LG OR cat:cs.AI OR cat:cs.CV OR cat:stat.ML"
+
+
 class ArxivClient:
     def __init__(self, config: Config):
         self._config = config
         self._client = arxiv.Client(
             page_size=100,
             delay_seconds=config.get("sources", "arxiv", "delay_between_requests", default=3.0),
-            num_retries=5,
+            num_retries=1,
         )
+        self._category_filter = config.get("sources", "arxiv", "category_filter", default=_CAT_FILTER)
+
+    def _build_query(self, query: str) -> str:
+        if self._category_filter:
+            return f"({self._category_filter}) AND ({query})"
+        return query
 
     async def search(self, query: str, max_results: int = 20) -> list[SearchResult]:
         search = arxiv.Search(
-            query=query,
+            query=self._build_query(query),
             max_results=max_results,
             sort_by=arxiv.SortCriterion.Relevance,
             sort_order=arxiv.SortOrder.Descending,
@@ -66,7 +75,7 @@ class ArxivClient:
 
     def search_sync(self, query: str, max_results: int = 20) -> list[SearchResult]:
         search = arxiv.Search(
-            query=query,
+            query=self._build_query(query),
             max_results=max_results,
             sort_by=arxiv.SortCriterion.Relevance,
             sort_order=arxiv.SortOrder.Descending,
