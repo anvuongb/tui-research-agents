@@ -60,6 +60,9 @@ class PipelineScreen(Vertical):
             "distill": "distiller",
             "loading": "distiller",
             "analyzing": "distiller",
+            "implement": "implementer",
+            "generating": "implementer",
+            "prototype": "prototyper",
         }
 
         stage_id = stage_map.get(message.stage)

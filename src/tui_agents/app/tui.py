@@ -141,6 +141,8 @@ DataTable {
     padding: 1 2;
     margin: 1 0;
     border: solid $primary-background;
+    max-height: 20;
+    overflow-y: auto;
 }
 
 #detail-title {
@@ -183,6 +185,7 @@ class TuiAgentsApp(App):
     def __init__(self, orchestrator: Orchestrator):
         super().__init__()
         self.orchestrator = orchestrator
+        self._last_switch_time: float = 0.0
 
     def compose(self) -> ComposeResult:
         yield Header(show_clock=True)
@@ -199,12 +202,35 @@ class TuiAgentsApp(App):
                 yield ConfigScreen()
         yield Footer()
 
+    async def _focus_screen(self, pane_id: str) -> None:
+        screen_mapping = {
+            "dashboard-tab": "dashboard-screen",
+            "papers-tab": "papers-screen",
+            "pipeline-tab": "pipeline-screen",
+            "benchmarks-tab": "benchmarks-screen",
+            "config-tab": "config-screen",
+        }
+        screen_id = screen_mapping.get(pane_id)
+        if screen_id:
+            try:
+                screen = self.query_one(f"#{screen_id}")
+                if hasattr(screen, "on_tab_focus"):
+                    await screen.on_tab_focus()
+            except Exception:
+                pass
+
     def action_switch_tab(self, tab_id: str) -> None:
+        import time
         try:
             tabbed = self.query_one(TabbedContent)
             tabbed.active = tab_id
+            self._last_switch_time = time.monotonic()
+            self.set_timer(0.5, lambda: self._focus_screen(tab_id))
         except Exception:
             pass
+
+    def on_mount(self) -> None:
+        self.set_timer(0.5, lambda: self._focus_screen("dashboard-tab"))
 
     @on(TabbedContent.TabActivated)
     def on_tab_activated(self, event: TabbedContent.TabActivated) -> None:

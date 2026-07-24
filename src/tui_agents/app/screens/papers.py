@@ -42,19 +42,22 @@ class PapersScreen(Vertical):
             yield Static("", id="detail-year")
             yield Static("", id="detail-source")
             yield Static("", id="detail-abstract")
+            yield Static("", id="detail-distill-summary")
+            yield Static("", id="detail-distill-methodology")
+            yield Static("", id="detail-distill-contributions")
+            yield Static("", id="detail-distill-limitations")
 
         with Horizontal(id="action-bar"):
             yield Button("Collect Selected", id="collect-btn", variant="primary")
             yield Button("Distill Selected", id="distill-btn", variant="warning")
+            yield Button("Implement Selected", id="implement-btn", variant="success")
+            yield Button("Prototype Selected", id="prototype-btn", variant="error")
             yield Button("Refresh Library", id="refresh-btn", variant="default")
 
     def on_mount(self) -> None:
         table = self.query_one("#papers-table", DataTable)
         table.add_columns("Title", "Source", "Year", "Status")
         table.show_header = True
-
-    async def on_tab_focus(self) -> None:
-        await self._refresh_library()
 
     async def on_tab_focus(self) -> None:
         await self._refresh_library()
@@ -97,6 +100,26 @@ class PapersScreen(Vertical):
                 if row_id:
                     await self._distill_paper(str(row_id))
 
+    @on(Button.Pressed, "#implement-btn")
+    async def on_implement_selected(self) -> None:
+        table = self.query_one("#papers-table", DataTable)
+        if table.cursor_row is not None:
+            row_key = table.coordinate_to_cell_key((table.cursor_row, 0))
+            if row_key:
+                row_id = row_key.row_key.value
+                if row_id:
+                    await self._implement_paper(str(row_id))
+
+    @on(Button.Pressed, "#prototype-btn")
+    async def on_prototype_selected(self) -> None:
+        table = self.query_one("#papers-table", DataTable)
+        if table.cursor_row is not None:
+            row_key = table.coordinate_to_cell_key((table.cursor_row, 0))
+            if row_key:
+                row_id = row_key.row_key.value
+                if row_id:
+                    await self._prototype_paper(str(row_id))
+
     @on(Button.Pressed, "#refresh-btn")
     async def on_refresh(self) -> None:
         await self._refresh_library()
@@ -120,6 +143,25 @@ class PapersScreen(Vertical):
                 )
                 abstract = paper.abstract[:800] + ("..." if len(paper.abstract) > 800 else "")
                 self.query_one("#detail-abstract", Static).update(abstract)
+
+                distillation = await self.app.orchestrator.db.get_distillation(row_id)
+                if distillation:
+                    summary = distillation.summary[:400] + ("..." if len(distillation.summary) > 400 else "")
+                    self.query_one("#detail-distill-summary", Static).update(
+                        f"\n[bold]Summary:[/] {summary}"
+                    )
+                    method = distillation.methodology[:300] + ("..." if len(distillation.methodology) > 300 else "")
+                    self.query_one("#detail-distill-methodology", Static).update(
+                        f"\n[bold]Methodology:[/] {method}"
+                    )
+                    contribs = "\n  - " + "\n  - ".join(distillation.contributions[:5])
+                    self.query_one("#detail-distill-contributions", Static).update(
+                        f"\n[bold]Contributions:[/]{contribs}"
+                    )
+                    lims = "\n  - " + "\n  - ".join(distillation.limitations[:3]) if distillation.limitations else " None noted"
+                    self.query_one("#detail-distill-limitations", Static).update(
+                        f"\n[bold]Limitations:[/]{lims}"
+                    )
 
     async def update_progress(self, message: ProgressUpdate) -> None:
         label = self.query_one("#progress-label", Label)
@@ -212,6 +254,46 @@ class PapersScreen(Vertical):
 
         self.run_worker(distill_worker(), exclusive=True)
 
+    async def _implement_paper(self, paper_id: str) -> None:
+        async def progress_cb(stage: str, msg: str, pct: float) -> None:
+            self.post_message(ProgressUpdate("implement", stage, msg, pct))
+
+        async def implement_worker() -> None:
+            try:
+                impl = await self.app.orchestrator.implement_paper(
+                    paper_id, progress=progress_cb
+                )
+                if impl:
+                    self.post_message(ProgressUpdate(
+                        "implement", "done",
+                        f"Implementation complete: {len(impl.code)} chars", 1.0
+                    ))
+                    self.post_message(PapersUpdated())
+            except Exception as e:
+                self.post_message(ProgressUpdate("implement", "error", str(e), 0))
+
+        self.run_worker(implement_worker(), exclusive=True)
+
+    async def _prototype_paper(self, paper_id: str) -> None:
+        async def progress_cb(stage: str, msg: str, pct: float) -> None:
+            self.post_message(ProgressUpdate("prototype", stage, msg, pct))
+
+        async def prototype_worker() -> None:
+            try:
+                result = await self.app.orchestrator.prototype_paper(
+                    paper_id, progress=progress_cb
+                )
+                if result:
+                    self.post_message(ProgressUpdate(
+                        "prototype", "done",
+                        f"Prototype created", 1.0
+                    ))
+                    self.post_message(PapersUpdated())
+            except Exception as e:
+                self.post_message(ProgressUpdate("prototype", "error", str(e), 0))
+
+        self.run_worker(prototype_worker(), exclusive=True)
+
     async def _refresh_library(self) -> None:
         table = self.query_one("#papers-table", DataTable)
         table.clear()
@@ -278,3 +360,13 @@ class PapersScreen(Vertical):
         label = self.query_one("#progress-label", Label)
         label.update(f"Distilled! Summary: {d.summary[:120]}...")
         await self._refresh_library()
+        # Re-select the distilled paper to refresh the detail panel
+        try:
+            table = self.query_one("#papers-table", DataTable)
+            for row_idx in range(table.row_count):
+                key = table.coordinate_to_cell_key((row_idx, 0))
+                if key and key.row_key.value == message.paper_id:
+                    table.move_cursor(row=row_idx)
+                    break
+        except Exception:
+            pass

@@ -6,10 +6,12 @@ from typing import Any, Callable, Coroutine
 
 from tui_agents.agents.collector import CollectorAgent
 from tui_agents.agents.distiller import DistillerAgent
+from tui_agents.agents.implementer import ImplementerAgent
+from tui_agents.agents.prototyper import PrototyperAgent
 from tui_agents.llm.client import LLMClient
 from tui_agents.sources.arxiv import SearchResult
 from tui_agents.storage.database import Database
-from tui_agents.storage.models import Paper, StageStatus
+from tui_agents.storage.models import Implementation, Paper, StageStatus
 from tui_agents.storage.vector_store import VectorStore
 from tui_agents.utils.config import Config
 
@@ -33,6 +35,8 @@ class Orchestrator:
 
         self.collector = CollectorAgent(llm, database, vector_store, config)
         self.distiller = DistillerAgent(llm, database, vector_store)
+        self.implementer = ImplementerAgent(llm, database, vector_store, config)
+        self.prototyper = PrototyperAgent(llm, database, vector_store, config)
 
     async def search_papers(
         self,
@@ -66,6 +70,20 @@ class Orchestrator:
     ):
         return await self.distiller.distill(paper_id, progress=progress)
 
+    async def implement_paper(
+        self,
+        paper_id: str,
+        progress: ProgressFn | None = None,
+    ) -> Implementation | None:
+        return await self.implementer.implement(paper_id, progress=progress)
+
+    async def prototype_paper(
+        self,
+        paper_id: str,
+        progress: ProgressFn | None = None,
+    ) -> dict[str, Any] | None:
+        return await self.prototyper.prototype(paper_id, progress=progress)
+
     async def run_pipeline(
         self,
         paper_id: str,
@@ -95,6 +113,25 @@ class Orchestrator:
                     "id": distillation.id if distillation else None,
                 }
                 if not distillation:
+                    return results
+            elif stage == "implementer":
+                if progress:
+                    await progress(stage, f"Implementing: {paper.title[:60]}...", i / len(stages))
+                impl = await self.implementer.implement(paper_id, progress=progress)
+                results["stages"][stage] = {
+                    "completed": impl is not None,
+                    "id": impl.id if impl else None,
+                }
+                if not impl:
+                    return results
+            elif stage == "prototyper":
+                if progress:
+                    await progress(stage, f"Prototyping: {paper.title[:60]}...", i / len(stages))
+                proto = await self.prototyper.prototype(paper_id, progress=progress)
+                results["stages"][stage] = {
+                    "completed": proto is not None,
+                }
+                if not proto:
                     return results
             else:
                 if progress:
