@@ -1,0 +1,215 @@
+from textual import on
+from textual.app import App, ComposeResult
+from textual.binding import Binding
+from textual.widgets import Footer, Header, TabbedContent, TabPane
+
+from tui_agents.agents.orchestrator import Orchestrator
+from tui_agents.app.messages import ProgressUpdate
+from tui_agents.app.screens.benchmarks import BenchmarksScreen
+from tui_agents.app.screens.config_screen import ConfigScreen
+from tui_agents.app.screens.dashboard import DashboardScreen
+from tui_agents.app.screens.papers import PapersScreen
+from tui_agents.app.screens.pipeline import PipelineScreen
+
+
+CSS = """
+Screen {
+    background: $surface;
+}
+
+Header {
+    dock: top;
+    background: $primary;
+    color: $text;
+}
+
+Footer {
+    dock: bottom;
+    background: $primary-background;
+    color: $text-muted;
+}
+
+TabbedContent {
+    height: 1fr;
+}
+
+TabPane {
+    padding: 1 2;
+}
+
+#dashboard-screen, #papers-screen, #pipeline-screen, #benchmarks-screen, #config-screen {
+    overflow-y: auto;
+}
+
+.container {
+    height: auto;
+}
+
+.status-bar {
+    background: $primary-background;
+    color: $text-muted;
+    padding: 1 2;
+    dock: bottom;
+    height: 3;
+}
+
+.status-label {
+    color: $text;
+}
+
+.status-value {
+    color: $accent;
+}
+
+.section-title {
+    color: $primary;
+    text-style: bold;
+    padding: 1 0;
+}
+
+.card {
+    border: solid $primary-background;
+    padding: 1 2;
+    margin: 1 0;
+}
+
+.card-title {
+    color: $accent;
+    text-style: bold;
+}
+
+.card-subtitle {
+    color: $text-muted;
+}
+
+.list-item {
+    padding: 0 1;
+    color: $text;
+}
+
+.list-item-alt {
+    padding: 0 1;
+    color: $text;
+    background: $primary-background;
+}
+
+.status-pending {
+    color: $warning;
+}
+
+.status-in-progress {
+    color: $primary;
+}
+
+.status-completed {
+    color: $success;
+}
+
+.status-failed {
+    color: $error;
+}
+
+Input {
+    margin: 1 0;
+}
+
+Button {
+    margin: 0 1;
+}
+
+DataTable {
+    height: 1fr;
+    margin: 1 0;
+}
+
+#search-input {
+    width: 100%;
+    margin: 0 0 1 0;
+    border: solid $accent;
+}
+
+#progress-label {
+    color: $primary;
+    padding: 1 2;
+    background: $panel;
+    margin: 1 0;
+}
+
+#detail-panel {
+    background: $panel;
+    padding: 1 2;
+    margin: 1 0;
+    border: solid $primary-background;
+}
+
+#detail-title {
+    color: $accent;
+    text-style: bold;
+}
+
+#detail-abstract {
+    color: $text;
+    margin: 1 0;
+}
+
+#action-bar {
+    padding: 1 0;
+    background: $panel;
+}
+
+.error-text {
+    color: $error;
+}
+"""
+
+
+class TuiAgentsApp(App):
+    CSS = CSS
+    TITLE = "TUI Agents — Research Paper Agent Pipeline"
+    SUB_TITLE = "Collect • Distill • Implement • Prototype • Benchmark"
+
+    ENABLE_COMMAND_PALETTE = False
+
+    BINDINGS = [
+        Binding("q", "quit", "Quit", show=True),
+        Binding("ctrl+d", "switch_tab('dashboard-tab')", "Dashboard", show=True),
+        Binding("ctrl+p", "switch_tab('papers-tab')", "Papers", show=True),
+        Binding("ctrl+l", "switch_tab('pipeline-tab')", "Pipeline", show=True),
+        Binding("ctrl+b", "switch_tab('benchmarks-tab')", "Benchmarks", show=True),
+        Binding("ctrl+g", "switch_tab('config-tab')", "Config", show=True),
+    ]
+
+    def __init__(self, orchestrator: Orchestrator):
+        super().__init__()
+        self.orchestrator = orchestrator
+
+    def compose(self) -> ComposeResult:
+        yield Header(show_clock=True)
+        with TabbedContent():
+            with TabPane(" Dashboard ", id="dashboard-tab"):
+                yield DashboardScreen()
+            with TabPane(" Papers ", id="papers-tab"):
+                yield PapersScreen()
+            with TabPane(" Pipeline ", id="pipeline-tab"):
+                yield PipelineScreen()
+            with TabPane(" Benchmarks ", id="benchmarks-tab"):
+                yield BenchmarksScreen()
+            with TabPane(" Config ", id="config-tab"):
+                yield ConfigScreen()
+        yield Footer()
+
+    def action_switch_tab(self, tab_id: str) -> None:
+        try:
+            tabbed = self.query_one(TabbedContent)
+            tabbed.active = tab_id
+        except Exception:
+            pass
+
+    @on(TabbedContent.TabActivated)
+    def on_tab_activated(self, event: TabbedContent.TabActivated) -> None:
+        pass
+
+    async def on_progress_update(self, message: ProgressUpdate) -> None:
+        papers_screen = self.query_one("#papers-screen", PapersScreen)
+        if papers_screen:
+            await papers_screen.update_progress(message)

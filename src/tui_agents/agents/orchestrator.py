@@ -1,0 +1,103 @@
+from __future__ import annotations
+
+import logging
+from datetime import datetime
+from typing import Any, Callable, Coroutine
+
+from tui_agents.agents.collector import CollectorAgent
+from tui_agents.agents.distiller import DistillerAgent
+from tui_agents.llm.client import LLMClient
+from tui_agents.sources.arxiv import SearchResult
+from tui_agents.storage.database import Database
+from tui_agents.storage.models import Paper, StageStatus
+from tui_agents.storage.vector_store import VectorStore
+from tui_agents.utils.config import Config
+
+
+ProgressFn = Callable[[str, str, float], Coroutine[Any, Any, None]]
+
+
+class Orchestrator:
+    def __init__(
+        self,
+        config: Config,
+        database: Database,
+        vector_store: VectorStore,
+        llm: LLMClient,
+    ):
+        self.config = config
+        self.db = database
+        self.vector_store = vector_store
+        self.llm = llm
+        self._logger = logging.getLogger("tui_agents.orchestrator")
+
+        self.collector = CollectorAgent(llm, database, vector_store, config)
+        self.distiller = DistillerAgent(llm, database, vector_store)
+
+    async def search_papers(
+        self,
+        query: str,
+        sources: list[str] | None = None,
+        max_results: int = 20,
+        progress: ProgressFn | None = None,
+    ) -> list[SearchResult]:
+        return await self.collector.search_only(query, sources, max_results, progress)
+
+    async def collect_papers(
+        self,
+        query: str,
+        sources: list[str] | None = None,
+        max_results: int = 20,
+        progress: ProgressFn | None = None,
+    ) -> list[Paper]:
+        return await self.collector.search_and_collect(query, sources, max_results, progress)
+
+    async def collect_single_paper(
+        self,
+        result: SearchResult,
+        progress: ProgressFn | None = None,
+    ) -> Paper | None:
+        return await self.collector.collect_paper(result, progress)
+
+    async def distill_paper(
+        self,
+        paper_id: str,
+        progress: ProgressFn | None = None,
+    ):
+        return await self.distiller.distill(paper_id, progress=progress)
+
+    async def run_pipeline(
+        self,
+        paper_id: str,
+        progress: ProgressFn | None = None,
+    ) -> dict[str, Any]:
+        paper = await self.db.get_paper(paper_id)
+        if not paper:
+            return {"status": "error", "error": f"Paper not found: {paper_id}"}
+
+        stages = self.config.pipeline_stages
+        results: dict[str, Any] = {"paper_id": paper_id, "stages": {}}
+
+        for i, stage in enumerate(stages):
+            if progress:
+                await progress(
+                    "pipeline",
+                    f"Running stage {i+1}/{len(stages)}: {stage}",
+                    i / len(stages),
+                )
+
+            if stage == "distiller":
+                if progress:
+                    await progress(stage, f"Distilling: {paper.title[:60]}...", i / len(stages))
+                distillation = await self.distiller.distill(paper_id, progress=progress)
+                results["stages"][stage] = {
+                    "completed": distillation is not None,
+                    "id": distillation.id if distillation else None,
+                }
+                if not distillation:
+                    return results
+            else:
+                if progress:
+                    await progress(stage, f"Stage '{stage}' not yet implemented", i / len(stages))
+
+        return results

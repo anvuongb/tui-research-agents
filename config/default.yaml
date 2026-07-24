@@ -1,0 +1,53 @@
+# Default configuration for TUI Agents
+
+llm:
+  base_url: "https://api.deepseek.com"
+  api_key: "${LLM_API_KEY}"
+  model: "deepseek-v4-pro"
+  temperature: 0.3
+  max_tokens: 4096
+  timeout: 120
+
+sources:
+  arxiv:
+    enabled: true
+    max_results: 20
+    delay_between_requests: 3.0
+  semantic_scholar:
+    enabled: true
+    api_key: "${SEMANTIC_SCHOLAR_API_KEY}"
+    max_results: 20
+  local_pdf:
+    enabled: true
+    watch_directory: "./papers"
+
+storage:
+  database_path: "./data/tui_agents.db"
+  data_dir: "./data"
+  papers_dir: "./data/papers"
+  code_dir: "./data/code"
+  benchmarks_dir: "./data/benchmarks"
+
+vector_store:
+  provider: "chromadb"
+  chroma:
+    persist_directory: "./data/chroma"
+    collection_name: "papers"
+
+pipeline:
+  stages:
+    - collector
+    - distiller
+    - implementer
+    - prototyper
+    - benchmarker
+  benchmark:
+    iterations: 3
+    pass_threshold: 0.7
+  loop:
+    max_iterations: 5
+
+ui:
+  theme: "dark"
+  refresh_interval: 2.0
+  log_level: "INFO"
