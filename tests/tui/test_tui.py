@@ -249,3 +249,55 @@ class TestProgressAccumulation:
 
         self._apply_stage(stages, "impl", "generating", 1.0, msg="Done!")
         assert stages["generating"]["status"] == "✓"
+
+
+class TestRunPrototypeButton:
+    """Verify the Run Prototype button visibility/invisibility in the detail panel."""
+
+    @pytest.mark.asyncio
+    async def test_button_exists_in_compose(self, test_orchestrator):
+        """The Run Prototype button is composed in the impl-controls row."""
+        app = TuiAgentsApp(test_orchestrator)
+        async with app.run_test(size=(120, 40)) as pilot:
+            await pilot.pause()
+            tabs = app.query_one(TabbedContent)
+            tabs.active = "papers-tab"
+            await pilot.pause(0.1)
+            btn = app.query_one("#run-proto-btn", Button)
+            assert btn is not None
+            assert "Run Prototype" in str(btn.label)
+
+    @pytest.mark.asyncio
+    async def test_button_visible_when_implementation_exists(self, test_orchestrator):
+        """Button shows and is enabled when the selected paper has implementations."""
+        from tui_agents.storage.models import Paper, PaperSource, Implementation
+
+        await test_orchestrator.db.upsert_paper(Paper(
+            id="run-btn-test", source=PaperSource.ARXIV, source_id="rbt.1",
+            title="Run Button Test", authors=["A"], status="prototyped",
+        ))
+        await test_orchestrator.db.save_implementation(Implementation(
+            id="rbt-impl", paper_id="run-btn-test", run_id="r1", code="x",
+        ))
+
+        app = TuiAgentsApp(test_orchestrator)
+        async with app.run_test(size=(120, 40)) as pilot:
+            await pilot.pause()
+            tabs = app.query_one(TabbedContent)
+            tabs.active = "papers-tab"
+            await pilot.pause(0.3)
+
+            papers_screen = app.query_one("#papers-screen")
+            await papers_screen._refresh_library()
+            await pilot.pause(0.1)
+
+            dt = app.query_one("#papers-table", DataTable)
+            if dt.row_count > 0:
+                key = dt.coordinate_to_cell_key((0, 0))
+                event = type("FakeEvent", (), {"row_key": key.row_key})()
+                await papers_screen.on_row_highlighted(event)
+                await pilot.pause(0.1)
+
+            btn = app.query_one("#run-proto-btn", Button)
+            assert btn.styles.display != "none"
+            assert not btn.disabled

@@ -3,6 +3,7 @@ from textual.app import ComposeResult
 from textual.containers import Container, Horizontal, Vertical, VerticalScroll
 from textual.message import Message
 from textual.widgets import Button, DataTable, Input, Label, Static
+import asyncio
 
 from tui_agents.app.messages import (
     DistillationReady,
@@ -55,6 +56,7 @@ class PapersScreen(Vertical):
                     yield Button("▶", id="impl-next-btn", variant="default")
                     yield Button("View Code", id="view-code-btn", variant="primary")
                     yield Button("Delete", id="delete-impl-btn", variant="error")
+                    yield Button("Run Prototype", id="run-proto-btn", variant="success")
 
         with Horizontal(id="action-bar"):
             yield Button("Collect Selected", id="collect-btn", variant="primary")
@@ -287,6 +289,9 @@ class PapersScreen(Vertical):
                 next_btn.disabled = (version_idx >= len(impls) - 1)
                 view_btn.disabled = False
                 delete_btn.disabled = False
+                run_btn = self.query_one("#run-proto-btn", Button)
+                run_btn.disabled = False
+                run_btn.styles.display = "block"
             else:
                 self.query_one("#detail-impl-summary", Static).update(
                     "\n[bold]Implementation:[/] none yet \u2014 click Implement Selected"
@@ -295,12 +300,15 @@ class PapersScreen(Vertical):
                 self.query_one("#impl-controls").styles.display = "block"
                 for bid in ("#impl-prev-btn", "#impl-next-btn", "#view-code-btn", "#delete-impl-btn"):
                     self.query_one(bid, Button).disabled = True
+                self.query_one("#run-proto-btn", Button).styles.display = "none"
 
     SPINNER = ("⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏")
     STAGE_ORDER = {
         "search": 0, "collecting": 1, "collect": 2, "download": 3, "extract": 4, "chunk": 5, "embed": 6,
         "loading": 7, "paper_text": 8, "analyzing": 9, "github": 10, "evaluate": 11,
-        "generating": 12, "saving": 13, "done": 14, "pipeline": 15,
+        "generating": 12, "saving": 13, "done": 14,
+        "estimating": 15, "building": 16, "running": 17, "running_output": 18, "evaluating": 19,
+        "implementer": 20, "prototyper": 21, "benchmarker": 22, "loop": 23, "pipeline": 24,
         "error": 98, "waiting_input": 99,
     }
 
@@ -530,6 +538,8 @@ class PapersScreen(Vertical):
         except Exception:
             papers = []
 
+        from textual.widgets._data_table import DuplicateKey
+
         for paper in papers:
             status_icon = {
                 "new": "⚪",
@@ -544,13 +554,16 @@ class PapersScreen(Vertical):
             if len(title) > 60:
                 title = title[:57] + "..."
 
-            table.add_row(
-                title,
-                paper.source.value,
-                paper.published_date or "N/A",
-                f"{status_icon} {paper.status}",
-                key=paper.id,
-            )
+            try:
+                table.add_row(
+                    title,
+                    paper.source.value,
+                    paper.published_date or "N/A",
+                    f"{status_icon} {paper.status}",
+                    key=paper.id,
+                )
+            except DuplicateKey:
+                pass
 
         count = len(papers) if papers else 0
         label = self.query_one("#progress-label", Label)
@@ -617,6 +630,76 @@ class PapersScreen(Vertical):
                             code=impl.code,
                             dependencies=impl.dependencies,
                         ))
+
+    @on(Button.Pressed, "#run-proto-btn")
+    async def on_run_prototype(self) -> None:
+        table = self.query_one("#papers-table", DataTable)
+        if table.cursor_row is None:
+            return
+        row_key = table.coordinate_to_cell_key((table.cursor_row, 0))
+        if not row_key or not row_key.row_key.value:
+            return
+        paper_id = str(row_key.row_key.value)
+        paper = await self.app.orchestrator.db.get_paper(paper_id)
+        if not paper or paper.status != "prototyped":
+            return
+
+        impls = await self.app.orchestrator.db.list_implementations(paper_id)
+        version_idx = self._impl_versions.get(paper_id, len(impls) - 1)
+        impl = impls[version_idx] if 0 <= version_idx < len(impls) else None
+        if not impl:
+            return
+
+        from pathlib import Path
+        from tui_agents.app.screens.run_modal import RunModal
+        from tui_agents.agents.runtime_estimator import RuntimeEstimator
+
+        code_dir = Path(self.app.orchestrator.config.code_dir) / paper_id / impl.id[:8]
+        proto_path = code_dir / "prototype.py"
+        prototype_code = proto_path.read_text() if proto_path.exists() else impl.code
+
+        estimator = RuntimeEstimator(self.app.orchestrator.llm)
+        estimate = await estimator.estimate(impl, prototype_code)
+        est_seconds = estimate.get("estimate_seconds", 60)
+
+        runner_config = self.app.orchestrator.config
+        timeout = runner_config.get("runner", "timeout", default=300)
+        memory_mb = runner_config.get("runner", "memory_mb", default=4096)
+
+        modal = RunModal(
+            paper_title=paper.title,
+            code_preview=prototype_code,
+            estimate_seconds=est_seconds,
+            timeout=timeout,
+            memory_mb=memory_mb,
+        )
+
+        async def on_run_confirm(result: str | None) -> None:
+            if result != "start":
+                return
+
+            async def progress_cb(stage: str, msg: str, pct: float) -> None:
+                self.post_message(ProgressUpdate("benchmark", stage, msg, pct))
+
+            async def bench_worker() -> None:
+                try:
+                    bench = await self.app.orchestrator.benchmark_paper(
+                        paper_id, progress=progress_cb, impl_version_idx=version_idx,
+                    )
+                    if bench:
+                        passed = "PASSED" if bench.passed_threshold else "FAILED"
+                        self.post_message(ProgressUpdate(
+                            "benchmark", "done",
+                            f"Benchmark {passed} — {len(bench.metrics)} metrics", 1.0,
+                        ))
+                        self.post_message(PapersUpdated())
+                        await self._refresh_library()
+                except Exception as e:
+                    self.post_message(ProgressUpdate("benchmark", "error", str(e), 0))
+
+            asyncio.create_task(bench_worker())
+
+        self.app.push_screen(modal, on_run_confirm)
 
     @on(Button.Pressed, "#impl-prev-btn")
     async def on_impl_prev(self) -> None:

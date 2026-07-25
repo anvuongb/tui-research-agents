@@ -4,6 +4,7 @@ import logging
 from datetime import datetime
 from typing import Any, Callable, Coroutine
 
+from tui_agents.agents.benchmarker import BenchmarkerAgent
 from tui_agents.agents.collector import CollectorAgent
 from tui_agents.agents.distiller import DistillerAgent
 from tui_agents.agents.implementer import ImplementerAgent
@@ -37,6 +38,7 @@ class Orchestrator:
         self.distiller = DistillerAgent(llm, database, vector_store)
         self.implementer = ImplementerAgent(llm, database, vector_store, config)
         self.prototyper = PrototyperAgent(llm, database, vector_store, config)
+        self.benchmarker = BenchmarkerAgent(llm, database, vector_store, config)
 
     async def search_papers(
         self,
@@ -76,9 +78,11 @@ class Orchestrator:
         progress: ProgressFn | None = None,
         github_url: str | None = None,
         skip_eval: bool = False,
+        previous_benchmark_context: dict[str, Any] | None = None,
     ) -> Implementation | None:
         return await self.implementer.implement(
-            paper_id, progress=progress, github_url=github_url, skip_eval=skip_eval
+            paper_id, progress=progress, github_url=github_url, skip_eval=skip_eval,
+            previous_benchmark_context=previous_benchmark_context,
         )
 
     async def prototype_paper(
@@ -87,6 +91,14 @@ class Orchestrator:
         progress: ProgressFn | None = None,
     ) -> dict[str, Any] | None:
         return await self.prototyper.prototype(paper_id, progress=progress)
+
+    async def benchmark_paper(
+        self,
+        paper_id: str,
+        progress: ProgressFn | None = None,
+        impl_version_idx: int = 0,
+    ):
+        return await self.benchmarker.benchmark(paper_id, progress=progress, impl_version_idx=impl_version_idx)
 
     async def delete_paper(self, paper_id: str) -> None:
         import shutil
@@ -128,48 +140,67 @@ class Orchestrator:
         if not paper:
             return {"status": "error", "error": f"Paper not found: {paper_id}"}
 
-        stages = self.config.pipeline_stages
-        results: dict[str, Any] = {"paper_id": paper_id, "stages": {}}
+        max_iterations = self.config.loop_max_iterations
+        iteration = 0
+        last_benchmark: Any = None
+        results: dict[str, Any] = {"paper_id": paper_id, "iterations": []}
 
-        for i, stage in enumerate(stages):
+        while iteration < max_iterations:
+            iter_result: dict[str, Any] = {"iteration": iteration + 1}
+
             if progress:
-                await progress(
-                    "pipeline",
-                    f"Running stage {i+1}/{len(stages)}: {stage}",
-                    i / len(stages),
-                )
+                await progress("loop", f"Iteration {iteration+1}/{max_iterations}", iteration / max_iterations)
 
-            if stage == "distiller":
-                if progress:
-                    await progress(stage, f"Distilling: {paper.title[:60]}...", i / len(stages))
-                distillation = await self.distiller.distill(paper_id, progress=progress)
-                results["stages"][stage] = {
-                    "completed": distillation is not None,
-                    "id": distillation.id if distillation else None,
+            if iteration > 0 and last_benchmark:
+                prev_context = {
+                    "previous_metrics": last_benchmark.metrics,
+                    "passed": last_benchmark.passed_threshold,
+                    "analysis": getattr(last_benchmark, "analysis", ""),
                 }
-                if not distillation:
-                    return results
-            elif stage == "implementer":
-                if progress:
-                    await progress(stage, f"Implementing: {paper.title[:60]}...", i / len(stages))
-                impl = await self.implementer.implement(paper_id, progress=progress)
-                results["stages"][stage] = {
-                    "completed": impl is not None,
-                    "id": impl.id if impl else None,
-                }
-                if not impl:
-                    return results
-            elif stage == "prototyper":
-                if progress:
-                    await progress(stage, f"Prototyping: {paper.title[:60]}...", i / len(stages))
-                proto = await self.prototyper.prototype(paper_id, progress=progress)
-                results["stages"][stage] = {
-                    "completed": proto is not None,
-                }
-                if not proto:
-                    return results
             else:
-                if progress:
-                    await progress(stage, f"Stage '{stage}' not yet implemented", i / len(stages))
+                prev_context = None
 
+            if progress:
+                await progress("implementer", f"Implementing (iteration {iteration+1})...", 0.0)
+            impl = await self.implementer.implement(
+                paper_id, progress=progress,
+                previous_benchmark_context=prev_context,
+            )
+            iter_result["implementer"] = {"completed": impl is not None, "id": impl.id if impl else None}
+            if not impl:
+                results["iterations"].append(iter_result)
+                break
+
+            impls = await self.db.list_implementations(paper_id)
+            impl_idx = len(impls) - 1
+
+            if progress:
+                await progress("prototyper", "Prototyping...", 0.0)
+            proto = await self.prototyper.prototype(paper_id, progress=progress)
+            iter_result["prototyper"] = {"completed": proto is not None}
+            if not proto:
+                results["iterations"].append(iter_result)
+                break
+
+            if progress:
+                await progress("benchmarker", "Benchmarking...", 0.0)
+            bench = await self.benchmarker.benchmark(
+                paper_id, progress=progress, impl_version_idx=impl_idx,
+            )
+            iter_result["benchmarker"] = {
+                "completed": bench is not None,
+                "passed": bench.passed_threshold if bench else False,
+            }
+
+            if bench and bench.passed_threshold:
+                results["iterations"].append(iter_result)
+                results["status"] = "passed"
+                results["total_iterations"] = iteration + 1
+                return results
+
+            last_benchmark = bench
+            iteration += 1
+
+        results["status"] = "max_iterations"
+        results["total_iterations"] = iteration
         return results

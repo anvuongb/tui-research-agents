@@ -30,6 +30,12 @@ github:
 cache:
   github_ttl_seconds: 86400
 
+runner:
+  timeout: 300
+  memory_mb: 4096
+  cpu_cores: 2
+  image: "python:3.11-slim"
+
 storage:
   database_path: "./data/tui_agents.db"
   data_dir: "./data"

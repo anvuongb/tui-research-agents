@@ -125,9 +125,9 @@ class TestPrototyperFileSave:
             "usage_instructions": "Run: python prototype.py",
             "expected_output": "Prototype runs successfully",
         }
-        agent._save_prototype_files("proto-test", result)
+        agent._save_prototype_files("proto-test", "proto12345678", result)
 
-        dest = agent._code_dir / "proto-test"
+        dest = agent._code_dir / "proto-test" / "proto123"
         assert (dest / "prototype.py").exists()
         assert (dest / "requirements.txt").exists()
         assert (dest / "README.md").exists()
@@ -142,7 +142,7 @@ class TestPrototyperFileSave:
     async def test_requirements_merged_with_existing(self, test_llm, test_db,
                                                        test_vector_store, tmp_config):
         agent = PrototyperAgent(test_llm, test_db, test_vector_store, tmp_config)
-        dest_dir = agent._code_dir / "merge-test"
+        dest_dir = agent._code_dir / "merge-test" / "merge123"
         dest_dir.mkdir(parents=True, exist_ok=True)
         (dest_dir / "requirements.txt").write_text("torch>=2.0\nnumpy")
 
@@ -151,7 +151,7 @@ class TestPrototyperFileSave:
             "requirements": ["torch>=2.0", "matplotlib", "numpy"],
             "usage_instructions": "",
         }
-        agent._save_prototype_files("merge-test", result)
+        agent._save_prototype_files("merge-test", "merge12345678", result)
 
         reqs = (dest_dir / "requirements.txt").read_text().strip().split("\n")
         assert "torch>=2.0" in reqs

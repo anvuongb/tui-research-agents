@@ -82,6 +82,7 @@ class ImplementerAgent(BaseAgent):
         progress: ProgressFn | None = None,
         github_url: str | None = None,
         skip_eval: bool = False,
+        previous_benchmark_context: dict[str, Any] | None = None,
     ) -> Implementation | None:
         paper = await self.db.get_paper(paper_id)
         if not paper:
@@ -141,7 +142,7 @@ class ImplementerAgent(BaseAgent):
                 await progress("generating", f"Generating implementation (~{context_tokens} tokens input{gh_info})...", 0.30)
 
             impl = await self._run_with_heartbeat(
-                self._run_llm_implementation(distillation, paper_text, ref_code, paper_id, progress),
+                self._run_llm_implementation(distillation, paper_text, ref_code, paper_id, progress, previous_benchmark_context),
                 progress, "generating",
             )
 
@@ -282,6 +283,7 @@ Are any of these repositories implementing this paper's method?"""
         ref_code: dict[str, Any] | None,
         paper_id: str,
         progress: ProgressFn | None = None,
+        previous_benchmark_context: dict[str, Any] | None = None,
     ) -> Implementation | None:
         contributions_text = "\n".join(f"- {c}" for c in distillation.contributions)
         equations_text = "\n".join(f"  {e}" for e in distillation.key_equations)
@@ -331,6 +333,13 @@ Are any of these repositories implementing this paper's method?"""
 {', '.join(distillation.limitations) if distillation.limitations else 'None noted'}
 {paper_section}
 {github_section}
+{""
+        f"{chr(10)}## Previous Benchmark Results{chr(10)}"
+        f"The previous implementation scored {previous_benchmark_context.get('previous_metrics', {})}."
+        f"{chr(10)}Passed: {previous_benchmark_context.get('passed', False)}"
+        f"{chr(10)}Analysis: {previous_benchmark_context.get('analysis', 'N/A')}"
+        f"{chr(10)}{chr(10)}Fix the issues identified above and improve the implementation." if previous_benchmark_context else ""
+}
 Provide a complete Python implementation as a JSON object."""
 
         schema = {

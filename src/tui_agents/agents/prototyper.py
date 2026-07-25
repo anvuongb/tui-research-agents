@@ -85,7 +85,7 @@ class PrototyperAgent(BaseAgent):
             if result:
                 await self.db.update_paper_status(paper_id, "prototyped")
 
-                self._save_prototype_files(paper_id, result)
+                self._save_prototype_files(paper_id, implementation.id, result)
 
                 output = {
                     "prototype_id": str(uuid.uuid4()),
@@ -109,8 +109,8 @@ class PrototyperAgent(BaseAgent):
                 await progress("error", f"Prototype creation failed: {e}", 0.0)
             return None
 
-    def _save_prototype_files(self, paper_id: str, result: dict[str, Any]) -> None:
-        dest_dir = self._code_dir / paper_id
+    def _save_prototype_files(self, paper_id: str, impl_id: str, result: dict[str, Any]) -> None:
+        dest_dir = self._code_dir / paper_id / impl_id[:8]
         dest_dir.mkdir(parents=True, exist_ok=True)
 
         script = self.strip_code_fences(result.get("script", ""))
