@@ -2,84 +2,89 @@
 
 ## Phase 4 — Benchmarker, Runner, Loop
 
-**Status: IN PROGRESS 🟡**
+**Status: DONE ✅**
 
-Core agents and UI are built. Remaining work: path fixes for existing papers, Docker verification, live streaming, and cancel during benchmark execution.
+Core agents, UI, loop, and correctness/hardening pass complete.
 
 ### Completed ✅
 
 | Component | File | Status |
 |---|---|---|
 | RuntimeEstimator | `agents/runtime_estimator.py` | ✅ Done |
-| DockerRunner | `agents/runner.py` | ✅ Done |
-| BenchmarkerAgent | `agents/benchmarker.py` | ✅ Done |
+| DockerRunner | `agents/runner.py` | ✅ Done (+ entrypoint, build timeout, cidfile cleanup, hardening flags) |
+| BenchmarkerAgent | `agents/benchmarker.py` | ✅ Done (+ requirements copy, entrypoint=benchmark.py, analysis persistence) |
 | RunModal | `app/screens/run_modal.py` | ✅ Done |
-| Orchestrator loop | `agents/orchestrator.py` | ✅ Done |
-| Run Prototype button | `app/screens/papers.py` | ✅ Done |
-| Benchmarks tab | `app/screens/benchmarks.py` | ✅ Done |
-| Pipeline stage map | `app/screens/pipeline.py` | ✅ Done |
-| STAGE_ORDER entries | `app/screens/papers.py` | ✅ Done |
-| Config | `config/default.yaml` | ✅ Done |
+| Orchestrator loop | `agents/orchestrator.py` | ✅ Done (+ analysis reaches retry prompt) |
+| Run Prototype button | `app/screens/papers.py` + `papers_workers.py` | ✅ Done |
+| Benchmarks tab | `app/screens/benchmarks.py` | ✅ Done (+ config-driven thresholds) |
+| Pipeline stage map | `app/screens/pipeline.py` | ✅ Done (+ missing-widget guard) |
+| STAGE_ORDER entries | `app/screens/papers.py` | ✅ Done (+ needs_github_link) |
+| Config | `config/default.yaml` | ✅ Done (dead keys removed/wired) |
+| Loop test with mock pass/fail | `tests/integration/test_run_pipeline.py` | ✅ Done |
+| Analysis feedback regression | `tests/integration/test_benchmarker.py` | ✅ Done |
+| E2E Docker execution test | — | ⬜ Remaining (needs real Docker daemon) |
+| Live stdout streaming in RunModal | — | ⬜ Remaining |
+| Cancel button during benchmark | — | ⬜ Remaining |
 
-### Remaining
-
-| Task | Priority | Notes |
-|---|---|---|
-| Fix prototype file path for existing papers | High | Prototyper now saves to versioned dir. User must re-run "Prototype Selected" for existing papers. |
-| E2E Docker execution test | High | Verify build → run → capture metrics works on a real machine with Docker |
-| Live stdout streaming in RunModal | Medium | Currently captured via pipe but not shown live in the modal after dismissal |
-| Cancel button during benchmark | Medium | Docker run supports timeout, but no in-progress cancel |
-| Docker not-installed UX | Medium | Better error message in RunModal before user clicks Run |
-| Benchmark context injection in loop | Medium | `_run_llm_implementation` passes `previous_benchmark_context` but prompt section uses raw dict — could be cleaner |
-| Loop iteration display in Dashboard | Low | Show "Paper X — iteration 2/5" |
-| Loop test with mock pass/fail | Low | Tests for orchestrator loop logic |
-
-### Loop Flow (implemented)
+### Loop Flow (implemented + tested)
 
 ```
 Implement → Prototype → Benchmark
     ↑                        │
     │   fail (iter < max)    │ pass
     └────────────────────────┘   ✓ done
-    Context: "Previous scored 0.65. Fix loss function."
+    Context: {metrics, passed, analysis: "First attempt: loss stuck..."}
 ```
 
 ---
 
 ## Phase 5 — Polish
 
-Final quality and UX improvements before v1.0.
+### Done in correctness/hardening pass ✅
+- papers.py split (compose/routing vs workers vs detail)
+- Tool-call fallback deduped into `BaseAgent._collect_tool_payload`
+- Dead config removed (`iterations`, `watch_directory`, `theme`); wired `refresh_interval`, `pass_threshold`, `log_level`
+- Unused symbols/imports pruned (COLLECTOR_TOOLS, BENCHMARKER_TOOLS, async arxiv dup, Semaphore, uvicorn tuning)
+- Docs updated (readme env var/test count, ARCHITECTURE tree, WEBAPP routes)
+- pyproject: markupsafe declared
 
-### Agent Streaming
+### Remaining (future)
+
+#### Agent Streaming
 - LLM streaming for real-time output during distill/implement
 - Show partial JSON as it arrives
 - Cancel button to abort long-running operations
 
-### Benchmark Visualization
+#### Benchmark Visualization
 - Charts/graphs of benchmark metrics over iterations (Rich tables/plots)
 - Side-by-side comparison of multiple implementations
 
-### Export
+#### Export
 - Export paper + distillation + implementation as zip
 - Export benchmark results as CSV/JSON
 - Export all collected papers as a knowledge base
 
-### Config Validation
+#### Config Validation
 - Validate config.yaml on startup
 - Show warnings for common misconfigurations
 - Test connection button for LLM and APIs
 
-### Error Recovery
+#### Error Recovery
 - Resume interrupted pipeline runs
 - Mark failed stages clearly in Pipeline view
 - One-click retry for failed stages
 
-### UX
+#### UX
 - Search history (recent queries)
 - Paper tags/folders for organization
 - Keyboard shortcut reference screen
 - Dark/light theme toggle
 
-### Documentation
+#### Documentation
 - User guide with screenshots
 - Developer guide for adding new agents
+
+#### Docker
+- E2E Docker execution test on a machine with Docker daemon
+- Live stdout streaming in RunModal
+- Cancel button during benchmark

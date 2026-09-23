@@ -1,13 +1,15 @@
 from __future__ import annotations
 
+import json
+import re
 from typing import Any
 
 from openai import AsyncOpenAI
 
 from tui_agents.utils.config import Config
+from tui_agents.utils.logging import get_logger
 
-
-_QUIET_LOG = True
+_log = get_logger(__name__)
 
 
 class LLMResponse:
@@ -18,6 +20,13 @@ class LLMResponse:
     @property
     def has_tool_calls(self) -> bool:
         return len(self.tool_calls) > 0
+
+
+def _strip_code_fences(text: str) -> str:
+    text = text.strip()
+    text = re.sub(r"^```(?:json|JSON)?\s*\n", "", text)
+    text = re.sub(r"\n```\s*$", "", text)
+    return text.strip()
 
 
 class LLMClient:
@@ -32,6 +41,12 @@ class LLMClient:
         self._temperature = config.llm_temperature
         self._max_tokens = config.llm_max_tokens
         self._client: AsyncOpenAI | None = None
+
+        if not api_key or api_key in ("", "not-configured"):
+            _log.warning(
+                "LLM API key is not configured. Set OPENAI_API_KEY in your environment. "
+                "LLM calls will fail until it is set."
+            )
 
     def _get_client(self) -> AsyncOpenAI:
         if self._client is None:
@@ -115,7 +130,7 @@ class LLMClient:
                 },
             }
         else:
-            schema_str = str(response_schema)
+            schema_str = json.dumps(response_schema, indent=2)
             user_prompt = f"{user_prompt}\n\nRespond with valid JSON matching this schema:\n{schema_str}"
             kwargs["messages"][1]["content"] = user_prompt
 
@@ -128,8 +143,7 @@ class LLMClient:
         response = await self._get_client().chat.completions.create(**kwargs)
         content = response.choices[0].message.content or "{}"
 
-        import json
         try:
-            return json.loads(content)
+            return json.loads(_strip_code_fences(content))
         except json.JSONDecodeError:
             return {"error": "Failed to parse structured response", "raw": content}

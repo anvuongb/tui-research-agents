@@ -1,5 +1,4 @@
 import logging
-import sys
 
 from rich.logging import RichHandler
 
@@ -15,11 +14,6 @@ def setup_logging(level: str = "INFO") -> logging.Logger:
 
     logger = logging.getLogger("tui_agents")
     logger.setLevel(level.upper())
-
-    uvicorn_logger = logging.getLogger("uvicorn")
-    uvicorn_logger.handlers.clear()
-    uvicorn_logger.propagate = True
-
     return logger
 
 

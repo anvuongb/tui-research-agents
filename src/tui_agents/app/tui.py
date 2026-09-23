@@ -190,9 +190,10 @@ DataTable {
 }
 
 #action-bar {
-    padding: 1 0;
+    padding: 0 1;
     background: $panel;
-    max-height: 10%;
+    height: auto;
+    align: center middle;
 }
 
 #search-bar {

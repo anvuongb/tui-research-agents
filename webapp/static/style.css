@@ -1,0 +1,23 @@
+.badge {
+    display: inline-block;
+    padding: 0.15rem 0.5rem;
+    border-radius: 4px;
+    background: var(--pico-primary-background);
+    color: var(--pico-primary);
+    font-size: 0.8rem;
+}
+
+article footer {
+    display: flex;
+    gap: 0.5rem;
+    align-items: center;
+}
+
+pre {
+    max-height: 500px;
+    overflow-y: auto;
+}
+
+details {
+    margin-bottom: 0.5rem;
+}

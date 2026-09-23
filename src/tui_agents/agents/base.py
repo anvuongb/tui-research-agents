@@ -173,6 +173,33 @@ class BaseAgent(ABC):
 
         return last_content or ""
 
+    async def _collect_tool_payload(
+        self,
+        messages: list[dict[str, Any]],
+        tools: list[dict[str, Any]],
+        tool_name: str,
+    ) -> dict[str, Any]:
+        """Shared tool-call fallback: run one LLM tool round-trip and return
+        the kwargs captured by `tool_name`, or parsed JSON content, or {}."""
+        collected: dict[str, Any] = {}
+
+        async def _handler(**kwargs) -> dict[str, Any]:
+            nonlocal collected
+            collected = kwargs
+            return {"status": "saved"}
+
+        response = await self._call_llm(messages, tools)
+        if response.has_tool_calls:
+            await self._handle_tool_calls(
+                response, tools, {tool_name: _handler}, messages
+            )
+        elif response.content:
+            try:
+                collected = json.loads(response.content)
+            except json.JSONDecodeError:
+                pass
+        return collected
+
     @abstractmethod
     async def execute(self, paper_id: str, **kwargs) -> dict[str, Any]:
         ...

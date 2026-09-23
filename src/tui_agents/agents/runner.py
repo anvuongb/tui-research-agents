@@ -17,7 +17,7 @@ WORKDIR /app
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt 2>&1
 COPY . .
-ENTRYPOINT ["python", "prototype.py"]
+ENTRYPOINT ["python", "{entrypoint}"]
 """
 
 
@@ -64,6 +64,7 @@ class DockerRunner:
         self,
         code_dir: Path,
         progress: Any = None,
+        entrypoint: str = "prototype.py",
     ) -> RunResult:
         docker_ok = await self.check_docker()
         if not docker_ok:
@@ -74,37 +75,39 @@ class DockerRunner:
 
         tag = f"tui-runner-{uuid.uuid4().hex[:8]}"
         work_dir = Path(tempfile.mkdtemp(prefix="tui-runner-"))
+        cid_file = work_dir / "container.cid"
 
         try:
-            shutil.copy(code_dir / "prototype.py", work_dir / "prototype.py")
-            req_src = code_dir / "requirements.txt"
-            if req_src.exists():
-                shutil.copy(req_src, work_dir / "requirements.txt")
-            else:
-                (work_dir / "requirements.txt").write_text("")
-
-            dockerfile = work_dir / "Dockerfile"
-            dockerfile.write_text(DOCKERFILE_TEMPLATE.format(image=self._image))
+            self._prepare_context(code_dir, work_dir, entrypoint)
 
             start_time = asyncio.get_event_loop().time()
 
             if progress:
                 await progress("building", "Building Docker image...", 0.0)
 
-            build_proc = await asyncio.create_subprocess_exec(
-                "docker", "build", "-t", tag, str(work_dir),
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.STDOUT,
-            )
-            build_out, _ = await build_proc.communicate()
-            if build_proc.returncode != 0:
+            try:
+                build_out, build_rc = await asyncio.wait_for(
+                    self._build(tag, work_dir),
+                    timeout=self._timeout,
+                )
+            except asyncio.TimeoutError:
+                _log.warning(f"Docker build timed out after {self._timeout}s for {tag}")
                 return RunResult(
-                    stderr=build_out.decode(errors="replace"),
-                    exit_code=build_proc.returncode,
+                    stderr=f"Docker build timed out after {self._timeout}s.",
+                    exit_code=-1,
+                    elapsed_seconds=asyncio.get_event_loop().time() - start_time,
+                    timed_out=True,
+                )
+
+            if build_rc != 0:
+                return RunResult(
+                    stderr=build_out.decode(errors="replace") if build_out else "",
+                    exit_code=build_rc,
+                    elapsed_seconds=asyncio.get_event_loop().time() - start_time,
                 )
 
             if progress:
-                await progress("running", "Running prototype in Docker...", 0.0)
+                await progress("running", f"Running {entrypoint} in Docker...", 0.0)
 
             try:
                 run_proc = await asyncio.create_subprocess_exec(
@@ -114,6 +117,10 @@ class DockerRunner:
                     "--network=none",
                     "--read-only",
                     "--tmpfs", "/tmp:size=512m",
+                    "--pids-limit=256",
+                    "--security-opt", "no-new-privileges",
+                    "--user", "65534:65534",
+                    "--cidfile", str(cid_file),
                     tag,
                     stdout=asyncio.subprocess.PIPE,
                     stderr=asyncio.subprocess.PIPE,
@@ -142,7 +149,12 @@ class DockerRunner:
                 await run_proc.wait()
 
             except asyncio.TimeoutError:
-                run_proc.kill() if run_proc else None
+                await self._stop_container(cid_file)
+                if run_proc:
+                    try:
+                        run_proc.kill()
+                    except ProcessLookupError:
+                        pass
                 return RunResult(
                     stdout="\n".join(stdout_lines) if stdout_lines else "",
                     stderr="\n".join(stderr_lines) if stderr_lines else "",
@@ -159,17 +171,66 @@ class DockerRunner:
             )
 
         finally:
+            await self._cleanup_image(tag)
             try:
-                rm_proc = await asyncio.create_subprocess_exec(
-                    "docker", "rmi", "-f", tag,
-                    stdout=asyncio.subprocess.DEVNULL,
-                    stderr=asyncio.subprocess.DEVNULL,
-                )
-                await rm_proc.wait()
-            except Exception:
-                pass
+                shutil.rmtree(str(work_dir), ignore_errors=True)
+            except Exception as e:
+                _log.warning(f"Failed to remove work dir {work_dir}: {e}")
 
-            try:
-                shutil.rmtree(str(work_dir))
-            except Exception:
-                pass
+    def _prepare_context(self, code_dir: Path, work_dir: Path, entrypoint: str) -> None:
+        """Copy source files and write the Dockerfile into work_dir."""
+        for py_file in sorted(code_dir.glob("*.py")):
+            shutil.copy(py_file, work_dir / py_file.name)
+
+        req_src = code_dir / "requirements.txt"
+        if req_src.exists():
+            shutil.copy(req_src, work_dir / "requirements.txt")
+        else:
+            (work_dir / "requirements.txt").write_text("")
+
+        dockerfile = work_dir / "Dockerfile"
+        dockerfile.write_text(
+            DOCKERFILE_TEMPLATE.format(image=self._image, entrypoint=entrypoint)
+        )
+
+    async def _build(self, tag: str, work_dir: Path) -> tuple[bytes | None, int]:
+        proc = await asyncio.create_subprocess_exec(
+            "docker", "build", "-t", tag, str(work_dir),
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.STDOUT,
+        )
+        out, _ = await proc.communicate()
+        if proc.returncode != 0:
+            return out, proc.returncode
+        return out, 0
+
+    async def _stop_container(self, cid_file: Path) -> None:
+        try:
+            if cid_file.exists():
+                cid = cid_file.read_text().strip()
+                if cid:
+                    proc = await asyncio.create_subprocess_exec(
+                        "docker", "stop", "-t", "5", cid,
+                        stdout=asyncio.subprocess.DEVNULL,
+                        stderr=asyncio.subprocess.DEVNULL,
+                    )
+                    await proc.wait()
+                    proc = await asyncio.create_subprocess_exec(
+                        "docker", "rm", "-f", cid,
+                        stdout=asyncio.subprocess.DEVNULL,
+                        stderr=asyncio.subprocess.DEVNULL,
+                    )
+                    await proc.wait()
+        except Exception as e:
+            _log.warning(f"Failed to stop container from {cid_file}: {e}")
+
+    async def _cleanup_image(self, tag: str) -> None:
+        try:
+            rm_proc = await asyncio.create_subprocess_exec(
+                "docker", "rmi", "-f", tag,
+                stdout=asyncio.subprocess.DEVNULL,
+                stderr=asyncio.subprocess.DEVNULL,
+            )
+            await rm_proc.wait()
+        except Exception as e:
+            _log.warning(f"Failed to remove image {tag}: {e}")

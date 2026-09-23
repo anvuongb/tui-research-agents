@@ -1,8 +1,6 @@
 from __future__ import annotations
 
 import asyncio
-import hashlib
-import os
 import uuid
 from datetime import datetime
 from difflib import SequenceMatcher
@@ -11,12 +9,11 @@ from typing import Any, Callable, Coroutine
 
 from tui_agents.agents.base import BaseAgent
 from tui_agents.llm.client import LLMClient
-from tui_agents.llm.tools import COLLECTOR_TOOLS
 from tui_agents.sources.arxiv import ArxivClient, SearchResult
 from tui_agents.sources.pdf import chunk_text, estimate_token_count, extract_text_from_pdf
 from tui_agents.sources.semantic_scholar import SemanticScholarClient
 from tui_agents.storage.database import Database
-from tui_agents.storage.models import Paper, PaperSource, StageStatus
+from tui_agents.storage.models import Paper, PaperSource
 from tui_agents.storage.vector_store import VectorStore
 from tui_agents.utils.config import Config
 
@@ -146,7 +143,7 @@ class CollectorAgent(BaseAgent):
         full_text = ""
         if pdf_path:
             try:
-                full_text = extract_text_from_pdf(pdf_path)
+                full_text = await asyncio.to_thread(extract_text_from_pdf, pdf_path)
             except Exception as e:
                 if progress:
                     await progress("extract", f"PDF extraction failed: {e}", 0.7)
@@ -182,7 +179,8 @@ class CollectorAgent(BaseAgent):
 
             embedding_ids: list[str] = []
             for chunk in chunks:
-                doc_id = self.vector_store.add(
+                doc_id = await asyncio.to_thread(
+                    self.vector_store.add,
                     text=chunk.text,
                     metadata={
                         "paper_id": paper_id,
@@ -278,13 +276,6 @@ class CollectorAgent(BaseAgent):
             from tui_agents.utils.logging import get_logger
             get_logger().warning(f"PDF download failed for {pdf_url}: {e}")
             return None
-
-    async def _search_arxiv_direct(
-        self, query: str, max_results: int, progress: ProgressFn | None = None
-    ) -> list[SearchResult]:
-        if progress:
-            await progress("search", "Searching arXiv directly via LLM...", 0.1)
-        return await asyncio.to_thread(self.arxiv.search_sync, query, max_results)
 
     async def execute(self, paper_id: str, **kwargs) -> dict[str, Any]:
         return {"status": "collector does not execute on existing papers. Use search_and_collect or collect_paper."}

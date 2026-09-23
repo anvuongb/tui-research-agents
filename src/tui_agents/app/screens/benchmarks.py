@@ -16,8 +16,14 @@ class BenchmarksScreen(Vertical):
 
         yield Static(" Thresholds", classes="section-title")
         with Container(classes="card"):
-            yield Static("Pass threshold: 0.7", classes="list-item")
-            yield Static("Max loop iterations: 5", classes="list-item")
+            try:
+                config = self.app.orchestrator.config
+                threshold = config.benchmark_pass_threshold
+                max_iter = config.loop_max_iterations
+            except Exception:
+                threshold, max_iter = 0.7, 5
+            yield Static(f"Pass threshold: {threshold}", classes="list-item")
+            yield Static(f"Max loop iterations: {max_iter}", classes="list-item")
 
     def on_mount(self) -> None:
         table = self.query_one("#benchmarks-table", DataTable)
@@ -50,8 +56,9 @@ class BenchmarksScreen(Vertical):
                         passed_icon,
                         key=paper.id,
                     )
-        except Exception:
-            pass
+        except Exception as e:
+            from tui_agents.utils.logging import get_logger
+            get_logger().warning(f"Benchmark refresh failed: {e}")
 
         label = self.query_one("#bench-paper-label", Label)
         rows = table.row_count

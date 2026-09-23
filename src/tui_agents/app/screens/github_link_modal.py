@@ -1,7 +1,7 @@
 from textual.app import ComposeResult
 from textual.containers import Container, Horizontal
 from textual.screen import Screen
-from textual.widgets import Button, Header, Input, Label, Static
+from textual.widgets import Button, Input, Label, Static
 
 
 class GitHubLinkModal(Screen):

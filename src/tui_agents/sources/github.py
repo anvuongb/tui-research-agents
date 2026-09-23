@@ -34,15 +34,13 @@ class GitHubClient:
         query = f"{title} {keywords}"
         if len(query) > 190:
             query = query[:190]
-        import urllib.parse
-        encoded = urllib.parse.quote(query, safe="")
 
         try:
             async with httpx.AsyncClient(timeout=30.0) as client:
                 resp = await client.get(
                     "https://api.github.com/search/repositories",
                     params={
-                        "q": encoded,
+                        "q": query,
                         "sort": "stars",
                         "order": "desc",
                         "per_page": min(max_results, 10),

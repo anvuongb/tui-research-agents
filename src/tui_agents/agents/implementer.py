@@ -1,7 +1,7 @@
 from __future__ import annotations
 
+import asyncio
 import hashlib
-import json
 import uuid
 from datetime import datetime
 from pathlib import Path
@@ -12,7 +12,7 @@ from tui_agents.llm.client import LLMClient
 from tui_agents.llm.tools import IMPLEMENTER_TOOLS
 from tui_agents.sources.github import GitHubClient
 from tui_agents.storage.database import Database
-from tui_agents.storage.models import Distillation, Implementation, StageStatus
+from tui_agents.storage.models import Distillation, Implementation
 from tui_agents.storage.vector_store import VectorStore
 from tui_agents.utils.config import Config
 
@@ -130,6 +130,12 @@ class ImplementerAgent(BaseAgent):
                             await progress("evaluate", "Evaluating reference relevance...", 0.22)
                         relevance = await self._evaluate_references(paper, distillation, results)
                         if not relevance.get("relevant", False):
+                            if progress:
+                                await progress(
+                                    "needs_github_link",
+                                    "References may not match. Enter a GitHub URL or skip.",
+                                    0.22,
+                                )
                             return None  # Signal: need user GitHub link
 
             context_chars = len(distillation.summary or "") + len(distillation.methodology or "") + len(paper_text or "") + len(ref_code.get("code", "") if ref_code else "")
@@ -199,7 +205,8 @@ class ImplementerAgent(BaseAgent):
 
     async def _load_paper_text(self, paper_id: str) -> str:
         try:
-            data = self.vector_store.collection.get(
+            data = await asyncio.to_thread(
+                self.vector_store.collection.get,
                 where={"paper_id": paper_id},
                 include=["documents", "metadatas"],
             )
@@ -217,7 +224,9 @@ class ImplementerAgent(BaseAgent):
             if len(combined) > 80000:
                 combined = combined[:80000] + "\n\n[... text truncated ...]"
             return combined
-        except Exception:
+        except Exception as e:
+            from tui_agents.utils.logging import get_logger
+            get_logger().warning(f"Failed to load paper text for {paper_id}: {e}")
             return ""
 
     async def _cached_github_search(
@@ -447,28 +456,10 @@ Provide a complete Python implementation as a JSON object."""
             {"role": "user", "content": user_prompt},
         ]
 
-        collected_data: dict[str, Any] = {}
-
-        async def save_implementation_handler(**kwargs) -> dict[str, Any]:
-            nonlocal collected_data
-            collected_data = kwargs
-            return {"status": "saved"}
-
-        handler_map = {"save_implementation": save_implementation_handler}
-
         try:
-            response = await self._call_llm(messages, IMPLEMENTER_TOOLS)
-            if response.has_tool_calls:
-                await self._handle_tool_calls(
-                    response, IMPLEMENTER_TOOLS, handler_map, messages
-                )
-            elif response.content:
-                try:
-                    data = json.loads(response.content)
-                    collected_data = data
-                except json.JSONDecodeError:
-                    pass
-
+            collected_data = await self._collect_tool_payload(
+                messages, IMPLEMENTER_TOOLS, "save_implementation"
+            )
             if collected_data:
                 return Implementation(
                     id="",
@@ -492,19 +483,6 @@ Provide a complete Python implementation as a JSON object."""
         text = re.sub(r"^```(?:python|py|)\s*\n", "", text)
         text = re.sub(r"\n```\s*$", "", text)
         return text.strip()
-        dest_dir = self._code_dir / paper_id
-        dest_dir.mkdir(parents=True, exist_ok=True)
-
-        code_path = dest_dir / "implementation.py"
-        code_path.write_text(impl.code)
-
-        if impl.tests:
-            test_path = dest_dir / "test_implementation.py"
-            test_path.write_text(impl.tests)
-
-        if impl.dependencies:
-            req_path = dest_dir / "requirements.txt"
-            req_path.write_text("\n".join(impl.dependencies))
 
     async def execute(self, paper_id: str, **kwargs) -> dict[str, Any]:
         progress_fn = kwargs.get("progress_fn")

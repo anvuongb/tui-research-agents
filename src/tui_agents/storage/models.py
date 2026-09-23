@@ -63,6 +63,7 @@ class BenchmarkResult(BaseModel):
     metrics: dict[str, Any] = Field(default_factory=dict)
     compared_to_baseline: bool = False
     passed_threshold: bool = False
+    analysis: str = ""
     created_at: str = Field(default_factory=lambda: datetime.now().isoformat())
 
 

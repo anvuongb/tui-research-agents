@@ -1,8 +1,6 @@
 from __future__ import annotations
 
-import json
 import uuid
-from datetime import datetime
 from pathlib import Path
 from typing import Any, Callable, Coroutine
 
@@ -10,7 +8,7 @@ from tui_agents.agents.base import BaseAgent
 from tui_agents.llm.client import LLMClient
 from tui_agents.llm.tools import PROTOTYPER_TOOLS
 from tui_agents.storage.database import Database
-from tui_agents.storage.models import Implementation, StageStatus
+from tui_agents.storage.models import Implementation
 from tui_agents.storage.vector_store import VectorStore
 from tui_agents.utils.config import Config
 
@@ -212,28 +210,10 @@ Create a self-contained Python script that demonstrates the implementation. Prov
             {"role": "user", "content": f"Implementation code:\n```python\n{code_excerpt}\n```"},
         ]
 
-        collected_data: dict[str, Any] = {}
-
-        async def save_prototype_handler(**kwargs) -> dict[str, Any]:
-            nonlocal collected_data
-            collected_data = kwargs
-            return {"status": "saved"}
-
-        handler_map = {"save_prototype": save_prototype_handler}
-
         try:
-            response = await self._call_llm(messages, PROTOTYPER_TOOLS)
-            if response.has_tool_calls:
-                await self._handle_tool_calls(
-                    response, PROTOTYPER_TOOLS, handler_map, messages
-                )
-            elif response.content:
-                try:
-                    data = json.loads(response.content)
-                    collected_data = data
-                except json.JSONDecodeError:
-                    pass
-
+            collected_data = await self._collect_tool_payload(
+                messages, PROTOTYPER_TOOLS, "save_prototype"
+            )
             if collected_data:
                 return collected_data
         except Exception as e:

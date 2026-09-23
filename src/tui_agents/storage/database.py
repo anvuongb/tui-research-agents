@@ -1,7 +1,5 @@
 import json
-import os
 from pathlib import Path
-from typing import Any
 
 import aiosqlite
 
@@ -77,6 +75,7 @@ CREATE TABLE IF NOT EXISTS benchmark_results (
     metrics TEXT NOT NULL DEFAULT '{}',
     compared_to_baseline INTEGER DEFAULT 0,
     passed_threshold INTEGER DEFAULT 0,
+    analysis TEXT DEFAULT '',
     created_at TEXT NOT NULL
 );
 
@@ -164,7 +163,8 @@ def _row_to_benchmark(row: tuple) -> BenchmarkResult:
         metrics=json.loads(row[3]),
         compared_to_baseline=bool(row[4]),
         passed_threshold=bool(row[5]),
-        created_at=row[6],
+        analysis=row[6] if len(row) > 7 else "",
+        created_at=row[-1],
     )
 
 
@@ -179,8 +179,18 @@ class Database:
             self._conn = await aiosqlite.connect(str(self._path))
             self._conn.row_factory = aiosqlite.Row
             await self._conn.executescript(SCHEMA)
+            await self._migrate()
             await self._conn.commit()
         return self._conn
+
+    async def _migrate(self) -> None:
+        assert self._conn is not None
+        cursor = await self._conn.execute("PRAGMA table_info(benchmark_results)")
+        cols = {row[1] for row in await cursor.fetchall()}
+        if "analysis" not in cols:
+            await self._conn.execute(
+                "ALTER TABLE benchmark_results ADD COLUMN analysis TEXT DEFAULT ''"
+            )
 
     async def close(self) -> None:
         if self._conn:
@@ -307,6 +317,28 @@ class Database:
             return None
         return _row_to_agent_run(tuple(rows[0]))
 
+    async def count_agent_runs_by_status(self) -> dict[str, int]:
+        """Return counts of agent runs grouped by status (latest run per paper+agent)."""
+        conn = await self._ensure_connected()
+        cursor = await conn.execute(
+            """
+            WITH latest AS (
+                SELECT ar.*,
+                       ROW_NUMBER() OVER (
+                           PARTITION BY paper_id, agent_type
+                           ORDER BY created_at DESC
+                       ) AS rn
+                FROM agent_runs ar
+            )
+            SELECT status, COUNT(*)
+            FROM latest
+            WHERE rn = 1
+            GROUP BY status
+            """
+        )
+        rows = await cursor.fetchall()
+        return {row[0]: row[1] for row in rows}
+
     async def save_distillation(self, d: Distillation) -> None:
         conn = await self._ensure_connected()
         await conn.execute(
@@ -387,12 +419,12 @@ class Database:
         await conn.execute(
             """INSERT OR REPLACE INTO benchmark_results
                (id, paper_id, run_id, metrics, compared_to_baseline,
-                passed_threshold, created_at)
-               VALUES (?, ?, ?, ?, ?, ?, ?)""",
+                passed_threshold, analysis, created_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
             (
                 b.id, b.paper_id, b.run_id, json.dumps(b.metrics),
                 int(b.compared_to_baseline), int(b.passed_threshold),
-                b.created_at,
+                b.analysis, b.created_at,
             ),
         )
         await conn.commit()

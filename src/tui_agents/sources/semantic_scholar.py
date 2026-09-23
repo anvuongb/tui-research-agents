@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import asyncio
 from typing import Any
 
 import httpx
@@ -21,7 +20,6 @@ class SemanticScholarClient:
             self._headers = {"x-api-key": api_key}
         else:
             self._headers = {}
-        self._rate_limit_sem = asyncio.Semaphore(10)
 
     async def search(self, query: str, max_results: int = 20) -> list[SearchResult]:
         params: dict[str, Any] = {

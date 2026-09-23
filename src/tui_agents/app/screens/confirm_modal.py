@@ -1,7 +1,7 @@
 from textual.app import ComposeResult
 from textual.containers import Container, Horizontal
 from textual.screen import Screen
-from textual.widgets import Button, Header, Label, Static
+from textual.widgets import Button, Label, Static
 
 
 class ConfirmModal(Screen):

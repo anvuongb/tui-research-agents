@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-import json
+import asyncio
 import uuid
 from datetime import datetime
 from typing import Any, Callable, Coroutine
@@ -10,7 +10,7 @@ from tui_agents.llm.client import LLMClient
 from tui_agents.llm.tools import DISTILLER_TOOLS
 from tui_agents.sources.pdf import estimate_token_count
 from tui_agents.storage.database import Database
-from tui_agents.storage.models import Distillation, StageStatus
+from tui_agents.storage.models import Distillation
 from tui_agents.storage.vector_store import VectorStore
 
 
@@ -115,7 +115,8 @@ class DistillerAgent(BaseAgent):
         all_texts: list[str] = []
 
         try:
-            existing = self.vector_store.collection.get(
+            existing = await asyncio.to_thread(
+                self.vector_store.collection.get,
                 where={"paper_id": paper_id},
                 include=["documents", "metadatas"],
             )
@@ -128,19 +129,21 @@ class DistillerAgent(BaseAgent):
                         docs_with_index.append((idx, doc))
                 docs_with_index.sort(key=lambda x: x[0])
                 all_texts.extend(doc for _, doc in docs_with_index)
-        except Exception:
-            pass
+        except Exception as e:
+            from tui_agents.utils.logging import get_logger
+            get_logger().warning(f"Failed to load chunks for {paper_id}: {e}")
 
         if not all_texts:
             paper = await self.db.get_paper(paper_id)
             if paper and paper.pdf_path:
                 try:
                     from tui_agents.sources.pdf import extract_text_from_pdf
-                    text = extract_text_from_pdf(paper.pdf_path)
+                    text = await asyncio.to_thread(extract_text_from_pdf, paper.pdf_path)
                     if text:
                         all_texts.append(text)
-                except Exception:
-                    pass
+                except Exception as e:
+                    from tui_agents.utils.logging import get_logger
+                    get_logger().warning(f"PDF re-extraction failed for {paper_id}: {e}")
 
         if not all_texts:
             paper = await self.db.get_paper(paper_id)
@@ -156,11 +159,11 @@ class DistillerAgent(BaseAgent):
         paper_id: str,
         progress: ProgressFn | None = None,
     ) -> Distillation | None:
-        max_chars = 120000
+        max_chars = 40000
         if len(text) > max_chars:
             text = text[:max_chars] + "\n\n[Text truncated due to length...]"
             if progress:
-                await progress("analyzing", "Paper truncated to 120K chars for LLM context...", 0.15)
+                await progress("analyzing", f"Paper truncated to {max_chars} chars for LLM context...", 0.15)
 
         schema = {
             "type": "object",
@@ -208,6 +211,10 @@ Provide your analysis as a JSON object."""
             )
 
             if "error" in result:
+                if progress:
+                    await progress("analyzing", f"JSON parse failed: {result.get('error', 'unknown')[:80]}", 0.2)
+                from tui_agents.utils.logging import get_logger
+                get_logger().warning(f"Distiller JSON parse failed: {result.get('error')}. Raw: {result.get('raw', '')[:200]}")
                 return await self._fallback_tool_distillation(title, text, paper_id, progress)
 
             return Distillation(
@@ -224,7 +231,9 @@ Provide your analysis as a JSON object."""
 
         except Exception as e:
             if progress:
-                await progress("error", f"Structured distillation failed: {e}, trying fallback...", 0.2)
+                await progress("analyzing", f"LLM call failed: {e}", 0.2)
+            from tui_agents.utils.logging import get_logger
+            get_logger().exception(f"Distiller LLM call exception")
             return await self._fallback_tool_distillation(title, text, paper_id, progress)
 
     async def _fallback_tool_distillation(
@@ -239,28 +248,10 @@ Provide your analysis as a JSON object."""
             {"role": "user", "content": f"Title: {title}\n\nPaper Text:\n{text}"},
         ]
 
-        collected_data: dict[str, Any] = {}
-
-        async def save_distillation_handler(**kwargs) -> dict[str, Any]:
-            nonlocal collected_data
-            collected_data = kwargs
-            return {"status": "saved"}
-
-        handler_map = {"save_distillation": save_distillation_handler}
-
         try:
-            response = await self._call_llm(messages, DISTILLER_TOOLS)
-            if response.has_tool_calls:
-                await self._handle_tool_calls(
-                    response, DISTILLER_TOOLS, handler_map, messages
-                )
-            elif response.content:
-                try:
-                    data = json.loads(response.content)
-                    collected_data = data
-                except json.JSONDecodeError:
-                    pass
-
+            collected_data = await self._collect_tool_payload(
+                messages, DISTILLER_TOOLS, "save_distillation"
+            )
             if collected_data:
                 return Distillation(
                     id="",

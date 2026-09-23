@@ -20,11 +20,19 @@ git clone git@github.com:anvuongb/tui-research-agents.git
 cd tui-research-agents
 python3 -m venv .venv && source .venv/bin/activate
 pip install -e .
-export LLM_API_KEY="sk-..."
+export OPENAI_API_KEY="sk-..."
 python3 -m tui_agents.main
 ```
 
 **Docker required** for benchmark execution.
+
+### Webapp (optional)
+
+```bash
+pip install -e ".[web]"
+python -m webapp.main
+# → http://127.0.0.1:5000
+```
 
 ## Keyboard Navigation
 
@@ -51,7 +59,7 @@ python3 -m tui_agents.main
 
 ```bash
 source .venv/bin/activate
-pytest tests/ -v          # 144 tests
+pytest tests/ -v          # 191 tests
 pytest tests/unit/ -v     # Fast unit tests only
 ```
 
@@ -59,3 +67,4 @@ pytest tests/unit/ -v     # Fast unit tests only
 
 - [Architecture & Pitfalls](docs/ARCHITECTURE.md)
 - [Phase Plan](docs/PLAN.md)
+- [Webapp](docs/WEBAPP.md)

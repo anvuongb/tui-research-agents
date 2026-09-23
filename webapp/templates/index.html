@@ -1,0 +1,40 @@
+{% extends "base.html" %}
+{% block content %}
+
+<h2>Papers</h2>
+
+<form method="get">
+    <div class="grid">
+        <input type="search" name="q" placeholder="Search papers..." value="{{ query }}">
+        <select name="status">
+            <option value="">All ({{ statuses.all }})</option>
+            {% for s in ['collected','distilled','implemented','prototyped','benchmarked'] %}
+            <option value="{{ s }}" {% if status == s %}selected{% endif %}>{{ s | capitalize }} ({{ statuses.get(s, 0) }})</option>
+            {% endfor %}
+        </select>
+        <button type="submit">Filter</button>
+    </div>
+</form>
+
+{% if papers %}
+    {% for paper in papers %}
+    <article>
+        <header>
+            <strong><a href="/paper/{{ paper.id }}">{{ paper.title }}</a></strong>
+        </header>
+        <p>
+            <small>{{ paper.source.value }} · {{ paper.published_date or 'N/A' }}</small>
+            <br>
+            {{ paper.abstract[:300] }}{% if paper.abstract|length > 300 %}...{% endif %}
+        </p>
+        <footer>
+            <span class="badge">{{ paper.status }}</span>
+            {% if paper.authors %}<small>{{ paper.authors[:3] | join(', ') }}</small>{% endif %}
+        </footer>
+    </article>
+    {% endfor %}
+{% else %}
+    <p><em>No papers found.</em></p>
+{% endif %}
+
+{% endblock %}

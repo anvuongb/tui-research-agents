@@ -1,0 +1,113 @@
+{% extends "base.html" %}
+{% block content %}
+
+<p><a href="/">← Back to papers</a></p>
+
+<article>
+    <header>
+        <h2>{{ paper.title }}</h2>
+        <p>
+            <small>{{ paper.authors | join(', ') }}</small>
+            <br>
+            <small>{{ paper.source.value }} · {{ paper.published_date or 'N/A' }}</small>
+            <br>
+            <span class="badge">{{ paper.status }}</span>
+            {% if has_pdf %}<a href="/pdf/{{ paper.id }}" class="secondary">📄 Download PDF</a>{% endif %}
+            {% if paper.url %}<a href="{{ paper.url }}" class="secondary" target="_blank">🔗 arXiv</a>{% endif %}
+        </p>
+    </header>
+    <p>{{ paper.abstract }}</p>
+</article>
+
+{% if distillation %}
+<article>
+    <h3>Distillation</h3>
+    <details open>
+        <summary>Summary</summary>
+        <p>{{ distillation.summary }}</p>
+    </details>
+    <details>
+        <summary>Methodology</summary>
+        <p>{{ distillation.methodology }}</p>
+    </details>
+    <details>
+        <summary>Contributions</summary>
+        <ul>
+            {% for c in distillation.contributions %}
+            <li>{{ c }}</li>
+            {% endfor %}
+        </ul>
+    </details>
+    {% if distillation.limitations %}
+    <details>
+        <summary>Limitations</summary>
+        <ul>
+            {% for l in distillation.limitations %}
+            <li>{{ l }}</li>
+            {% endfor %}
+        </ul>
+    </details>
+    {% endif %}
+    {% if distillation.key_equations %}
+    <details>
+        <summary>Key Equations</summary>
+        <ul>
+            {% for eq in distillation.key_equations %}
+            <li>{{ eq | render_equation }}</li>
+            {% endfor %}
+        </ul>
+    </details>
+    {% endif %}
+</article>
+{% endif %}
+
+{% if implementations %}
+<article>
+    <h3>Implementations ({{ implementations | length }})</h3>
+    {% for impl in implementations %}
+    <details>
+        <summary>Version {{ loop.revindex }} — {{ impl.created_at[:19] }} ({{ impl.code | length }} chars)</summary>
+        {% if impl.dependencies %}
+        <p><small>Dependencies: {{ impl.dependencies | join(', ') }}</small></p>
+        {% endif %}
+        {{ impl.code | highlight_code }}
+    </details>
+    {% endfor %}
+</article>
+{% endif %}
+
+{% if benchmarks %}
+<article>
+    <h3>Benchmarks</h3>
+    <table>
+        <thead>
+            <tr>
+                <th>Date</th>
+                <th>Metrics</th>
+                <th>Result</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for b in benchmarks %}
+            <tr>
+                <td>{{ b.created_at[:19] }}</td>
+                <td>
+                    {% for k, v in b.metrics.items() %}
+                    <small>{{ k }}: {{ v }}</small><br>
+                    {% endfor %}
+                </td>
+                <td>
+                    {% if b.passed_threshold %}
+                    <span class="badge">PASS</span>
+                    {% else %}
+                    <span class="badge">FAIL</span>
+                    {% endif %}
+                </td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+</article>
+{% endif %}
+
+{% endblock %}

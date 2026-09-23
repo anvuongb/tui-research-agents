@@ -10,8 +10,8 @@ from tui_agents.utils.logging import setup_logging
 
 
 def main() -> None:
-    setup_logging()
     config = load_config()
+    setup_logging(config.ui_log_level)
     llm = LLMClient(config)
     database = Database(config.database_path)
     vector_store = VectorStore(

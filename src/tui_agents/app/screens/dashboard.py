@@ -1,9 +1,7 @@
 from textual.app import ComposeResult
-from textual.containers import Container, Horizontal, Vertical
+from textual.containers import Horizontal, Vertical
 from textual.widgets import Static
 from textual.timer import Timer
-
-from tui_agents.storage.models import StageStatus
 
 
 class DashboardScreen(Vertical):
@@ -56,7 +54,11 @@ class DashboardScreen(Vertical):
                 yield Static(" Switch to Pipeline tab (Ctrl+L)", classes="card-subtitle")
 
     def on_mount(self) -> None:
-        self._refresh_timer = self.set_interval(5.0, self._refresh_stats)
+        try:
+            interval = self.app.orchestrator.config.ui_refresh_interval
+        except Exception:
+            interval = 5.0
+        self._refresh_timer = self.set_interval(interval, self._refresh_stats)
 
     async def on_tab_focus(self) -> None:
         await self._refresh_stats()
@@ -75,16 +77,15 @@ class DashboardScreen(Vertical):
             self.query_one("#stat-distilled", Static).update(f" Distilled: {distilled}")
             self.query_one("#stat-implemented", Static).update(f" Implemented: {implemented}")
 
-            in_progress = 0
-            completed = 0
-            failed = 0
+            counts = await db.count_agent_runs_by_status()
+            in_progress = counts.get("in_progress", 0)
+            completed = counts.get("completed", 0)
+            failed = counts.get("failed", 0)
 
-            papers = await db.list_papers(limit=1000)
-            for p in papers:
-                run = await db.get_latest_run(p.id, "distiller") if False else None
             self.query_one("#stat-in-progress", Static).update(f" In Progress: {in_progress}")
             self.query_one("#stat-completed", Static).update(f" Completed: {completed}")
             self.query_one("#stat-failed", Static).update(f" Failed: {failed}")
 
-        except Exception:
-            pass
+        except Exception as e:
+            from tui_agents.utils.logging import get_logger
+            get_logger().warning(f"Dashboard refresh failed: {e}")

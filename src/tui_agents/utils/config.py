@@ -102,16 +102,20 @@ class Config:
         return self.get("pipeline", "stages", default=["collector", "distiller", "implementer", "prototyper", "benchmarker"])
 
     @property
-    def benchmark_iterations(self) -> int:
-        return self.get("pipeline", "benchmark", "iterations", default=3)
-
-    @property
     def benchmark_pass_threshold(self) -> float:
         return self.get("pipeline", "benchmark", "pass_threshold", default=0.7)
 
     @property
     def loop_max_iterations(self) -> int:
         return self.get("pipeline", "loop", "max_iterations", default=5)
+
+    @property
+    def ui_refresh_interval(self) -> float:
+        return self.get("ui", "refresh_interval", default=5.0)
+
+    @property
+    def ui_log_level(self) -> str:
+        return self.get("ui", "log_level", default="INFO")
 
     @property
     def arxiv_enabled(self) -> bool:
@@ -128,10 +132,6 @@ class Config:
     @property
     def local_pdf_enabled(self) -> bool:
         return self.get("sources", "local_pdf", "enabled", default=True)
-
-    @property
-    def local_pdf_watch_dir(self) -> str:
-        return self.get("sources", "local_pdf", "watch_directory", default="./papers")
 
 
 def load_config(path: str | Path | None = None) -> Config:

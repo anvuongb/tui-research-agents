@@ -65,6 +65,7 @@ class PipelineScreen(Vertical):
             "paper_text": "implementer",
             "github": "implementer",
             "evaluate": "implementer",
+            "needs_github_link": "implementer",
             "generating": "implementer",
             "saving": "implementer",
             "implement": "implementer",
@@ -92,12 +93,16 @@ class PipelineScreen(Vertical):
                 self._update_stage_statuses(stage_id, status_text, "status-in-progress")
 
     def _update_stage_statuses(self, stage_id: str, status_text: str, css_class: str = "status-in-progress") -> None:
-        title_widget = self.query_one(f"#stage-title-{stage_id}", Static)
-        title_widget.remove_class("status-pending")
-        title_widget.add_class(css_class)
+        title_widgets = self.query(f"#stage-title-{stage_id}")
+        if title_widgets:
+            title_widget = title_widgets.first(Static)
+            title_widget.remove_class("status-pending")
+            title_widget.add_class(css_class)
 
-        status_widget = self.query_one(f"#stage-status-{stage_id}", Static)
-        status_widget.update(f" Status: {status_text}")
+        status_widgets = self.query(f"#stage-status-{stage_id}")
+        if status_widgets:
+            status_widget = status_widgets.first(Static)
+            status_widget.update(f" Status: {status_text}")
 
     @on(DistillationReady)
     async def on_distillation_ready(self, message: DistillationReady) -> None:

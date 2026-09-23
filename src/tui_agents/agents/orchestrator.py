@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import logging
-from datetime import datetime
 from typing import Any, Callable, Coroutine
 
 from tui_agents.agents.benchmarker import BenchmarkerAgent
@@ -12,7 +11,7 @@ from tui_agents.agents.prototyper import PrototyperAgent
 from tui_agents.llm.client import LLMClient
 from tui_agents.sources.arxiv import SearchResult
 from tui_agents.storage.database import Database
-from tui_agents.storage.models import Implementation, Paper, StageStatus
+from tui_agents.storage.models import Implementation, Paper
 from tui_agents.storage.vector_store import VectorStore
 from tui_agents.utils.config import Config
 
@@ -110,26 +109,29 @@ class Orchestrator:
 
         try:
             self.vector_store.delete_by_paper(paper_id)
-        except Exception:
-            pass
+        except Exception as e:
+            self._logger.warning(f"Failed to delete vectors for {paper_id}: {e}")
 
         await self.db.delete_paper(paper_id)
 
+        data_root = str(Path(self.config.data_dir).resolve())
         if paper.pdf_path:
             try:
-                pdf = Path(paper.pdf_path)
-                if pdf.exists():
+                pdf = Path(paper.pdf_path).resolve()
+                if str(pdf).startswith(data_root) and pdf.exists():
                     pdf.unlink()
-                pdf.parent.rmdir() if pdf.parent.exists() and not any(pdf.parent.iterdir()) else None
-            except Exception:
-                pass
+                    parent = pdf.parent
+                    if parent.exists() and not any(parent.iterdir()):
+                        parent.rmdir()
+            except Exception as e:
+                self._logger.warning(f"Failed to delete PDF for {paper_id}: {e}")
 
-        code_dir = Path(self.config.code_dir) / paper_id
-        if code_dir.exists():
+        code_dir = (Path(self.config.code_dir) / paper_id).resolve()
+        if str(code_dir).startswith(data_root) and code_dir.exists():
             try:
                 shutil.rmtree(str(code_dir))
-            except Exception:
-                pass
+            except Exception as e:
+                self._logger.warning(f"Failed to delete code dir for {paper_id}: {e}")
 
     async def run_pipeline(
         self,

@@ -47,7 +47,8 @@ tui_agents/
 ├── config/default.yaml
 ├── docs/
 │   ├── ARCHITECTURE.md
-│   └── PLAN.md
+│   ├── PLAN.md
+│   └── WEBAPP.md
 ├── pyproject.toml
 ├── data/                        # .gitignored
 │   ├── tui_agents.db
@@ -55,30 +56,36 @@ tui_agents/
 │   ├── papers/{paper_id}/{arxiv_id}.pdf
 │   ├── code/{paper_id}/{impl_id[:8]}/    # impl, tests, proto, reqs
 │   └── benchmarks/{paper_id}/{run_id}/   # bench script, output, summary
+├── webapp/                      # read-only Flask browser over same DB
+│   ├── main.py                  # routes, filters, async→sync bridge
+│   ├── templates/{base,index,paper}.html
+│   └── static/style.css
 ├── src/tui_agents/
 │   ├── main.py
+│   ├── ingest.py                # CLI local-PDF ingestion
 │   ├── app/
 │   │   ├── tui.py
 │   │   ├── messages.py
-│   │   ├── screens/
-│   │   │   ├── dashboard.py
-│   │   │   ├── papers.py
-│   │   │   ├── pipeline.py
-│   │   │   ├── benchmarks.py
-│   │   │   ├── config_screen.py
-│   │   │   ├── code_viewer.py
-│   │   │   ├── run_modal.py
-│   │   │   ├── github_link_modal.py
-│   │   │   └── confirm_modal.py
-│   │   └── widgets/__init__.py
+│   │   └── screens/
+│   │       ├── dashboard.py
+│   │       ├── papers.py        # compose + routing (workers/detail split out)
+│   │       ├── papers_workers.py    # search/collect/distill/implement/prototype/bench
+│   │       ├── papers_detail.py     # detail panel + impl versioning
+│   │       ├── pipeline.py
+│   │       ├── benchmarks.py
+│   │       ├── config_screen.py
+│   │       ├── code_viewer.py
+│   │       ├── run_modal.py
+│   │       ├── github_link_modal.py
+│   │       └── confirm_modal.py
 │   ├── agents/
-│   │   ├── base.py                 # BaseAgent, strip_code_fences, _run_with_heartbeat
+│   │   ├── base.py                 # BaseAgent, strip_code_fences, _collect_tool_payload
 │   │   ├── collector.py
 │   │   ├── distiller.py
 │   │   ├── implementer.py
 │   │   ├── prototyper.py
 │   │   ├── benchmarker.py          # Generate benchmark, Docker run, evaluate
-│   │   ├── runner.py               # Docker build/run with resource limits
+│   │   ├── runner.py               # Docker build/run with entrypoint + hardening
 │   │   ├── runtime_estimator.py    # LLM estimates CPU runtime
 │   │   └── orchestrator.py
 │   ├── llm/
@@ -89,12 +96,15 @@ tui_agents/
 │   │   ├── semantic_scholar.py
 │   │   ├── github.py
 │   │   └── pdf.py
-│   └── storage/
-│       ├── database.py
-│       ├── vector_store.py
-│       └── models.py
+│   ├── storage/
+│   │   ├── database.py             # CRUD + count_agent_runs_by_status + migrations
+│   │   ├── vector_store.py
+│   │   └── models.py
+│   └── utils/
+│       ├── config.py
+│       └── logging.py
 └── tests/
-    ├── conftest.py
+    ├── conftest.py                 # fixtures + mock_llm
     ├── unit/
     │   ├── test_deduplication.py
     │   ├── test_chunker.py
@@ -103,11 +113,18 @@ tui_agents/
     │   ├── test_collector_network.py
     │   ├── test_phase3_agents.py
     │   ├── test_phase35.py
-    │   └── test_stage_order.py
+    │   ├── test_stage_order.py
+    │   ├── test_webapp.py
+    │   ├── test_llm_client.py      # chat_structured parsing
+    │   ├── test_runner.py          # entrypoint + security flags
+    │   └── test_pipeline_handlers.py
     ├── integration/
     │   ├── test_storage.py
     │   ├── test_vector_store.py
-    │   └── test_orchestrator.py
+    │   ├── test_orchestrator.py
+    │   ├── test_benchmarker.py     # C2/H3 regressions
+    │   ├── test_run_pipeline.py    # loop + analysis feedback
+    │   └── test_dashboard_stats.py # count_agent_runs_by_status + analysis column
     └── tui/
         └── test_tui.py
 ```
@@ -154,31 +171,44 @@ tui_agents/
 - Progress tracking with braille spinner and stage auto-completion
 - Horizontal split layout (DataTable 60% | detail panel 40%)
 
-### Phase 4 — Benchmarker + Loop (IN PROGRESS 🟡)
+### Phase 4 — Benchmarker + Loop ✅
 - **DONE**: RuntimeEstimator (LLM analyzes code for runtime estimate)
-- **DONE**: DockerRunner (build/run with --network=none --read-only, timeout, limits)
-- **DONE**: BenchmarkerAgent (generate benchmark, run via Docker, parse metrics, evaluate)
+- **DONE**: DockerRunner (build/run with --network=none --read-only, timeout, limits, entrypoint param, cidfile cleanup, --user/--pids-limit/no-new-privileges)
+- **DONE**: BenchmarkerAgent (generate benchmark.py, run via Docker with entrypoint=benchmark.py, parse metrics, evaluate, persist analysis)
 - **DONE**: RunModal (code preview, estimate display, confirm before execution)
-- **DONE**: Orchestrator loop logic (implement → proto → bench → retry on failure)
+- **DONE**: Orchestrator loop logic (implement → proto → bench → retry with analysis feedback)
 - **DONE**: Pipeline stage mappings for benchmarker
 - **DONE**: Benchmarks tab with results DataTable
 - **DONE**: Run Prototype button in Papers tab
-- **NEEDS FIX**: Prototype file path mismatch (prototyper saved to old path, benchmarker reads from new — fixed in code, needs re-prototype for existing papers)
-- **TODO**: End-to-end Docker execution test
+- **DONE**: Loop tests with mock pass/fail + analysis regression tests
+- **TODO**: End-to-end Docker execution test on a real machine with Docker
 - **TODO**: Live stdout streaming during Docker run
 - **TODO**: Cancel button during benchmark execution
+
+### Phase 4.5 — Correctness & Hardening ✅
+- Flask webapp: debug=False, 127.0.0.1, equation XSS escape
+- DockerRunner entrypoint parameter (benchmark.py actually executes)
+- GitHub search double-encoding fix
+- BenchmarkResult.analysis column + migration + loop feedback
+- needs_github_link stage emitted + wired through UI
+- Pipeline stage missing-widget guard; dashboard count_agent_runs_by_status
+- asyncio.to_thread for PDF extraction + ChromaDB embedding (no UI freeze)
+- chat_structured: json.dumps schema, code-fence strip, missing-key warning
+- papers.py split (377 + workers + detail); tool-call fallback deduped to BaseAgent
+- Dead config removed/wired; unused symbols pruned
+- 191 tests (41 new)
 
 ---
 
 ## Test Suite
 
-**144 tests** across 3 tiers:
+**191 tests** across 3 tiers:
 
 | Tier | Files | Tests | What it covers |
 |---|---|---|---|
-| Unit | 9 files | 90+ tests | Dedup, chunker, arXiv queries, SS errors, collector network, implementer/prototyper structure, file save, prerequisite checks, GitHub client, cache, code viewer, stage order regression |
-| Integration | 3 files | 28+ tests | SQLite CRUD, cascade delete, multi-implementation, ChromaDB ops, orchestrator delete (DB + Chroma + filesystem) |
-| TUI | 1 file | 22+ tests | Widget hierarchy, tab navigation, keyboard bindings, progress accumulation, Run Prototype button |
+| Unit | 12 files | 130+ tests | Dedup, chunker, arXiv, SS errors, collector network, agent structure, stage order, webapp/XSS, LLM parsing, runner entrypoint/hardening, pipeline handlers |
+| Integration | 6 files | 45+ tests | SQLite CRUD + migrations, cascade delete, ChromaDB, orchestrator delete, benchmarker C2/H3, run_pipeline loop, dashboard stats |
+| TUI | 1 file | 16 tests | Widget hierarchy, tab navigation, keyboard bindings, progress accumulation, Run Prototype button |
 
 ```bash
 source .venv/bin/activate && pytest tests/ -v
@@ -232,19 +262,19 @@ Calling `widget.focus()` inside `on_tab_activated` or related handlers latches f
 **Affected:** `_refresh_library` in `papers.py`
 
 ### 5. Prototyper saves to wrong directory
-Prototyper must save to `data/code/{paper_id}/{impl.id[:8]}/` (versioned), not `data/code/{paper_id}/` (flat). The benchmarker and Run button both read from the versioned path. Existing papers need re-prototype.
+Prototyper must save to `data/code/{paper_id}/{impl.id[:8]}/` (versioned), not `data/code/{paper_id}/` (flat). The benchmarker and Run button both read from the versioned path.
 
 **Fix applied:** `_save_prototype_files` now takes `impl_id` parameter.
 
 ### 6. STAGE_ORDER must include every agent progress() stage
-Any new `progress("stage_name", ...)` call in any agent must have an entry in `PapersScreen.STAGE_ORDER`, or multiple spinners animate simultaneously.
+Any new `progress("stage_name", ...)` call in any agent must have an entry in `PapersScreen.STAGE_ORDER` (and `PipelineScreen.stage_map`), or multiple spinners animate simultaneously / stages crash.
 
 **Regression test:** `test_stage_order.py` scans all agent `.py` files and verifies.
 
 ### 7. RunModal callback uses asyncio.create_task, not run_worker
 `self.run_worker()` from within a `push_screen` callback context doesn't always fire. Use `asyncio.create_task(worker_coro())` instead.
 
-**Affected:** `on_run_prototype` handler in `papers.py`
+**Affected:** `on_run_prototype` handler → `_start_benchmark` in `papers_workers.py`
 
 ### 8. Category filter too long hangs arXiv API
 More than 4-5 OR clauses in arXiv `cat:` filter causes the API to hang. Current filter: 4 categories (`cs.LG OR cs.AI OR cs.CV OR stat.ML`).
@@ -265,3 +295,11 @@ When paper text + GitHub code + distillation exceed the model's context window, 
 The benchmarker needs Docker installed and running. Without it, `DockerRunner.check_docker()` returns False and execution is blocked with an error message.
 
 **Config:** `config/default.yaml` → `runner:` section controls timeout, memory, CPU.
+
+### 12. Flask debug mode must never ship enabled
+`debug=True` on a network-reachable host exposes the Werkzeug interactive debugger (RCE). The webapp binds `127.0.0.1` with `debug=False`.
+
+### 13. Docker timeout must stop the container, not just the CLI
+Killing the `docker run` client process orphans the container. Use `--cidfile` + `docker stop`/`docker rm` on timeout.
+
+**Regression test:** `TestRunCommandHardening` in `test_runner.py`

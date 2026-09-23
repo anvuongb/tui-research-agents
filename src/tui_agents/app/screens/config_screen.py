@@ -1,5 +1,5 @@
 from textual.app import ComposeResult
-from textual.containers import Container, Horizontal, Vertical
+from textual.containers import Container, Vertical
 from textual.widgets import Button, Label, Static
 
 from tui_agents.utils.config import load_config

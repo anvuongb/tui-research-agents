@@ -1,9 +1,7 @@
 from textual import on
 from textual.app import ComposeResult
-from textual.containers import Container, Horizontal, Vertical, VerticalScroll
-from textual.message import Message
+from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.widgets import Button, DataTable, Input, Label, Static
-import asyncio
 
 from tui_agents.app.messages import (
     DistillationReady,
@@ -12,11 +10,23 @@ from tui_agents.app.messages import (
     ProgressUpdate,
     SearchResultsReady,
 )
+from tui_agents.app.screens.papers_detail import PapersDetail
+from tui_agents.app.screens.papers_workers import PapersWorkers
 from tui_agents.sources.arxiv import SearchResult
 
 
-class PapersScreen(Vertical):
+class PapersScreen(PapersWorkers, PapersDetail, Vertical):
     id = "papers-screen"
+
+    SPINNER = ("⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏")
+    STAGE_ORDER = {
+        "search": 0, "collecting": 1, "collect": 2, "download": 3, "extract": 4, "chunk": 5, "embed": 6,
+        "loading": 7, "paper_text": 8, "analyzing": 9, "github": 10, "evaluate": 11,
+        "needs_github_link": 12, "generating": 13, "saving": 14, "done": 15,
+        "estimating": 16, "building": 17, "running": 18, "running_output": 19, "evaluating": 20,
+        "implementer": 21, "prototyper": 22, "benchmarker": 23, "loop": 24, "pipeline": 25,
+        "error": 98, "waiting_input": 99,
+    }
 
     def __init__(self):
         super().__init__()
@@ -123,33 +133,21 @@ class PapersScreen(Vertical):
 
     @on(Button.Pressed, "#distill-btn")
     async def on_distill_selected(self) -> None:
-        table = self.query_one("#papers-table", DataTable)
-        if table.cursor_row is not None:
-            row_key = table.coordinate_to_cell_key((table.cursor_row, 0))
-            if row_key:
-                row_id = row_key.row_key.value
-                if row_id:
-                    await self._distill_paper(str(row_id))
+        paper_id = self._selected_paper_id()
+        if paper_id:
+            await self._distill_paper(paper_id)
 
     @on(Button.Pressed, "#implement-btn")
     async def on_implement_selected(self) -> None:
-        table = self.query_one("#papers-table", DataTable)
-        if table.cursor_row is not None:
-            row_key = table.coordinate_to_cell_key((table.cursor_row, 0))
-            if row_key:
-                row_id = row_key.row_key.value
-                if row_id:
-                    await self._implement_paper(str(row_id))
+        paper_id = self._selected_paper_id()
+        if paper_id:
+            await self._implement_paper(paper_id)
 
     @on(Button.Pressed, "#prototype-btn")
     async def on_prototype_selected(self) -> None:
-        table = self.query_one("#papers-table", DataTable)
-        if table.cursor_row is not None:
-            row_key = table.coordinate_to_cell_key((table.cursor_row, 0))
-            if row_key:
-                row_id = row_key.row_key.value
-                if row_id:
-                    await self._prototype_paper(str(row_id))
+        paper_id = self._selected_paper_id()
+        if paper_id:
+            await self._prototype_paper(paper_id)
 
     @on(Button.Pressed, "#refresh-btn")
     async def on_refresh(self) -> None:
@@ -157,13 +155,9 @@ class PapersScreen(Vertical):
 
     @on(Button.Pressed, "#delete-paper-btn")
     async def on_delete_paper(self) -> None:
-        table = self.query_one("#papers-table", DataTable)
-        if table.cursor_row is None:
+        paper_id = self._selected_paper_id()
+        if not paper_id:
             return
-        row_key = table.coordinate_to_cell_key((table.cursor_row, 0))
-        if not row_key or not row_key.row_key.value:
-            return
-        paper_id = str(row_key.row_key.value)
         paper = await self.app.orchestrator.db.get_paper(paper_id)
         if not paper:
             return
@@ -178,139 +172,22 @@ class PapersScreen(Vertical):
                 del self._impl_versions[paper_id]
             self.query_one("#progress-label", Label).update(f"Deleted: {paper.title[:60]}")
             await self._refresh_library()
-            self.query_one("#detail-title", Label).update("")
-            self.query_one("#detail-authors", Static).update("")
-            self.query_one("#detail-year", Static).update("")
-            self.query_one("#detail-source", Static).update("")
-            self.query_one("#detail-abstract", Static).update("")
-            for wid in ("detail-distill-summary", "detail-distill-methodology",
-                         "detail-distill-contributions", "detail-distill-limitations",
-                         "detail-impl-summary"):
-                self.query_one(f"#{wid}", Static).update("")
-            self.query_one("#impl-controls").styles.display = "none"
+            self._clear_detail_panel()
 
         self.app.push_screen(
             ConfirmModal(
                 "Delete Paper",
                 f"Delete '{paper.title[:50]}' and all related data?\n\n"
                 f"This removes:\n"
-                f"  \u2022 Distillation\n"
-                f"  \u2022 Implementations\n"
-                f"  \u2022 Prototype code\n"
-                f"  \u2022 Downloaded PDF\n"
-                f"  \u2022 ChromaDB embeddings\n\n"
+                f"  • Distillation\n"
+                f"  • Implementations\n"
+                f"  • Prototype code\n"
+                f"  • Downloaded PDF\n"
+                f"  • ChromaDB embeddings\n\n"
                 f"This cannot be undone.",
             ),
             on_confirm,
         )
-
-    @on(DataTable.RowHighlighted, "#papers-table")
-    async def on_row_highlighted(self, event: DataTable.RowHighlighted) -> None:
-        row_key = event.row_key
-        if row_key and row_key.value:
-            row_id = str(row_key.value)
-            paper = await self.app.orchestrator.db.get_paper(row_id)
-            if paper:
-                self.query_one("#detail-title", Label).update(paper.title)
-                self.query_one("#detail-authors", Static).update(
-                    f"Authors: {', '.join(paper.authors[:5])}"
-                )
-                self.query_one("#detail-year", Static).update(
-                    f"Published: {paper.published_date or 'N/A'}"
-                )
-                self.query_one("#detail-source", Static).update(
-                    f"Source: {paper.source.value} | Status: {paper.status}"
-                )
-                abstract = paper.abstract[:800] + ("..." if len(paper.abstract) > 800 else "")
-                self.query_one("#detail-abstract", Static).update(abstract)
-
-                distillation = await self.app.orchestrator.db.get_distillation(row_id)
-                if distillation:
-                    summary = distillation.summary[:400] + ("..." if len(distillation.summary) > 400 else "")
-                    self.query_one("#detail-distill-summary", Static).update(
-                        f"\n[bold]Summary:[/] {summary}"
-                    )
-                    method = distillation.methodology[:300] + ("..." if len(distillation.methodology) > 300 else "")
-                    self.query_one("#detail-distill-methodology", Static).update(
-                        f"\n[bold]Methodology:[/] {method}"
-                    )
-                    contribs = "\n  - " + "\n  - ".join(distillation.contributions[:5])
-                    self.query_one("#detail-distill-contributions", Static).update(
-                        f"\n[bold]Contributions:[/]{contribs}"
-                    )
-                    lims = "\n  - " + "\n  - ".join(distillation.limitations[:3]) if distillation.limitations else " None noted"
-                    self.query_one("#detail-distill-limitations", Static).update(
-                        f"\n[bold]Limitations:[/]{lims}"
-                    )
-                else:
-                    self.query_one("#detail-distill-summary", Static).update("")
-                    self.query_one("#detail-distill-methodology", Static).update("")
-                    self.query_one("#detail-distill-contributions", Static).update("")
-                    self.query_one("#detail-distill-limitations", Static).update("")
-            else:
-                self.query_one("#detail-title", Label).update("")
-                self.query_one("#detail-authors", Static).update("")
-                self.query_one("#detail-year", Static).update("")
-                self.query_one("#detail-source", Static).update("")
-                self.query_one("#detail-abstract", Static).update("")
-                for wid in ("detail-distill-summary", "detail-distill-methodology",
-                             "detail-distill-contributions", "detail-distill-limitations",
-                             "detail-impl-summary"):
-                    try:
-                        self.query_one(f"#{wid}", Static).update("")
-                    except Exception:
-                        pass
-                self.query_one("#impl-controls").styles.display = "none"
-                return
-
-            impls = await self.app.orchestrator.db.list_implementations(row_id)
-
-            if impls:
-                version_idx = self._impl_versions.get(row_id, 0)
-                if version_idx >= len(impls):
-                    version_idx = len(impls) - 1
-                self._impl_versions[row_id] = version_idx
-
-                impl = impls[version_idx]
-                deps = ", ".join(impl.dependencies[:5])
-                self.query_one("#detail-impl-summary", Static).update(
-                    f"\n[bold]Implementation v{version_idx+1}/{len(impls)}:[/] {len(impl.code)} chars, {len(impl.dependencies)} deps ({deps})"
-                )
-                self.query_one("#impl-version-label", Static).update(
-                    f"v{version_idx+1}/{len(impls)}"
-                )
-                self.query_one("#impl-controls").styles.display = "block"
-
-                prev_btn = self.query_one("#impl-prev-btn", Button)
-                next_btn = self.query_one("#impl-next-btn", Button)
-                view_btn = self.query_one("#view-code-btn", Button)
-                delete_btn = self.query_one("#delete-impl-btn", Button)
-                prev_btn.disabled = (version_idx == 0)
-                next_btn.disabled = (version_idx >= len(impls) - 1)
-                view_btn.disabled = False
-                delete_btn.disabled = False
-                run_btn = self.query_one("#run-proto-btn", Button)
-                run_btn.disabled = False
-                run_btn.styles.display = "block"
-            else:
-                self.query_one("#detail-impl-summary", Static).update(
-                    "\n[bold]Implementation:[/] none yet \u2014 click Implement Selected"
-                )
-                self.query_one("#impl-version-label", Static).update("")
-                self.query_one("#impl-controls").styles.display = "block"
-                for bid in ("#impl-prev-btn", "#impl-next-btn", "#view-code-btn", "#delete-impl-btn"):
-                    self.query_one(bid, Button).disabled = True
-                self.query_one("#run-proto-btn", Button).styles.display = "none"
-
-    SPINNER = ("⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏")
-    STAGE_ORDER = {
-        "search": 0, "collecting": 1, "collect": 2, "download": 3, "extract": 4, "chunk": 5, "embed": 6,
-        "loading": 7, "paper_text": 8, "analyzing": 9, "github": 10, "evaluate": 11,
-        "generating": 12, "saving": 13, "done": 14,
-        "estimating": 15, "building": 16, "running": 17, "running_output": 18, "evaluating": 19,
-        "implementer": 20, "prototyper": 21, "benchmarker": 22, "loop": 23, "pipeline": 24,
-        "error": 98, "waiting_input": 99,
-    }
 
     def _render_progress(self) -> None:
         if not self._progress_stages:
@@ -354,181 +231,6 @@ class PapersScreen(Vertical):
         }
         self._render_progress()
 
-    async def _run_search(self, query: str) -> None:
-        label = self.query_one("#progress-label", Label)
-        label.update(f"Searching for: {query}...")
-
-        async def progress_cb(stage: str, msg: str, pct: float) -> None:
-            self.post_message(ProgressUpdate("search", stage, msg, pct))
-
-        async def search_worker() -> None:
-            try:
-                results = await self.app.orchestrator.search_papers(
-                    query, max_results=20, progress=progress_cb
-                )
-                self._search_results = results
-                self.post_message(SearchResultsReady(results))
-            except Exception as e:
-                self.post_message(ProgressUpdate("search", "error", str(e), 0.0))
-
-        self.run_worker(search_worker(), exclusive=True)
-
-    async def _collect_all_results(self) -> None:
-        label = self.query_one("#progress-label", Label)
-        label.update("Collecting all search results...")
-        results_to_collect = list(self._search_results)
-        self._search_results = []
-        table = self.query_one("#papers-table", DataTable)
-        table.clear()
-
-        async def progress_cb(stage: str, msg: str, pct: float) -> None:
-            self.post_message(ProgressUpdate("collect", stage, msg, pct))
-
-        async def collect_worker() -> None:
-            results = results_to_collect
-            collected = 0
-            for i, result in enumerate(results):
-                try:
-                    paper = await self.app.orchestrator.collect_single_paper(
-                        result, progress=progress_cb
-                    )
-                    if paper:
-                        collected += 1
-                        self.post_message(ProgressUpdate(
-                            "collect", "collecting",
-                            f"Collected {collected}/{len(results)}: {paper.title[:60]}",
-                            (i + 1) / len(results),
-                        ))
-                except Exception as e:
-                    self.post_message(ProgressUpdate("collect", "error", str(e), 0))
-            self.post_message(PapersUpdated())
-
-        self.run_worker(collect_worker(), exclusive=True)
-
-    async def _collect_single(self, result: SearchResult) -> None:
-        async def progress_cb(stage: str, msg: str, pct: float) -> None:
-            self.post_message(ProgressUpdate("collect", stage, msg, pct))
-
-        async def collect_worker() -> None:
-            try:
-                paper = await self.app.orchestrator.collect_single_paper(result, progress=progress_cb)
-                if paper:
-                    self.post_message(ProgressUpdate(
-                        "collect", "done",
-                        f"Collected: {paper.title[:80]}", 1.0
-                    ))
-                    self.post_message(PapersUpdated())
-            except Exception as e:
-                self.post_message(ProgressUpdate("collect", "error", str(e), 0))
-
-        self.run_worker(collect_worker(), exclusive=True)
-
-    async def _distill_paper(self, paper_id: str) -> None:
-        async def progress_cb(stage: str, msg: str, pct: float) -> None:
-            self.post_message(ProgressUpdate("distill", stage, msg, pct))
-
-        async def distill_worker() -> None:
-            try:
-                distillation = await self.app.orchestrator.distill_paper(
-                    paper_id, progress=progress_cb
-                )
-                if distillation:
-                    self.post_message(DistillationReady(paper_id, distillation))
-                    self.post_message(PapersUpdated())
-            except Exception as e:
-                self.post_message(ProgressUpdate("distill", "error", str(e), 0))
-
-        self.run_worker(distill_worker(), exclusive=True)
-
-    async def _implement_paper(self, paper_id: str) -> None:
-        self._needs_github_link = False
-
-        async def progress_cb(stage: str, msg: str, pct: float) -> None:
-            if stage == "needs_github_link":
-                self._needs_github_link = True
-            self.post_message(ProgressUpdate("implement", stage, msg, pct))
-
-        async def implement_worker() -> None:
-            try:
-                impl = await self.app.orchestrator.implement_paper(
-                    paper_id, progress=progress_cb
-                )
-                if impl:
-                    self.post_message(ImplementationReady(
-                        paper_id, len(impl.code), impl.dependencies
-                    ))
-                    self.post_message(PapersUpdated())
-                    return
-
-                if self._needs_github_link:
-                    self.post_message(ProgressUpdate(
-                        "implement", "waiting_input",
-                        "References may not match. Enter a GitHub URL or skip.", 0.3
-                    ))
-                    from tui_agents.app.screens.github_link_modal import GitHubLinkModal
-
-                    def push_modal() -> None:
-                        modal = GitHubLinkModal(
-                            "The GitHub search found repositories that may not be related to this paper."
-                        )
-
-                        async def on_dismiss(result: str | None) -> None:
-                            if result:
-                                self.post_message(ProgressUpdate(
-                                    "implement", "github",
-                                    f"Loading user-provided repo: {result}", 0.15
-                                ))
-                                retry_impl = await self.app.orchestrator.implement_paper(
-                                    paper_id, progress=progress_cb, github_url=result, skip_eval=True
-                                )
-                                if retry_impl:
-                                    self.post_message(ImplementationReady(
-                                        paper_id, len(retry_impl.code), retry_impl.dependencies
-                                    ))
-                                    self.post_message(PapersUpdated())
-                            else:
-                                self.post_message(ProgressUpdate(
-                                    "implement", "github",
-                                    "Skipping relevance check, proceeding with references...", 0.15
-                                ))
-                                retry_impl = await self.app.orchestrator.implement_paper(
-                                    paper_id, progress=progress_cb,
-                                    github_url="__skip_eval__", skip_eval=True
-                                )
-                                if retry_impl:
-                                    self.post_message(ImplementationReady(
-                                        paper_id, len(retry_impl.code), retry_impl.dependencies
-                                    ))
-                                    self.post_message(PapersUpdated())
-
-                        self.app.push_screen(modal, on_dismiss)
-
-                    self.app.call_from_thread(push_modal)
-            except Exception as e:
-                self.post_message(ProgressUpdate("implement", "error", str(e), 0))
-
-        self.run_worker(implement_worker(), exclusive=True)
-
-    async def _prototype_paper(self, paper_id: str) -> None:
-        async def progress_cb(stage: str, msg: str, pct: float) -> None:
-            self.post_message(ProgressUpdate("prototype", stage, msg, pct))
-
-        async def prototype_worker() -> None:
-            try:
-                result = await self.app.orchestrator.prototype_paper(
-                    paper_id, progress=progress_cb
-                )
-                if result:
-                    self.post_message(ProgressUpdate(
-                        "prototype", "done",
-                        f"Prototype created", 1.0
-                    ))
-                    self.post_message(PapersUpdated())
-            except Exception as e:
-                self.post_message(ProgressUpdate("prototype", "error", str(e), 0))
-
-        self.run_worker(prototype_worker(), exclusive=True)
-
     async def _refresh_library(self) -> None:
         table = self.query_one("#papers-table", DataTable)
         table.clear()
@@ -567,7 +269,8 @@ class PapersScreen(Vertical):
 
         count = len(papers) if papers else 0
         label = self.query_one("#progress-label", Label)
-        label.update(f"Library: {count} papers. Use search to find more.") if not self._search_results else None
+        if not self._search_results:
+            label.update(f"Library: {count} papers. Use search to find more.")
 
     async def on_search_results_ready(self, message: SearchResultsReady) -> None:
         table = self.query_one("#papers-table", DataTable)
@@ -582,7 +285,7 @@ class PapersScreen(Vertical):
                 title,
                 result.source,
                 result.published_date or "N/A",
-                f"   search result",
+                "   search result",
                 key=f"search-{i}",
             )
 
@@ -590,7 +293,7 @@ class PapersScreen(Vertical):
         if message.results:
             label.update(f"Found {len(message.results)} papers. Click 'Collect All' to download and process.")
         else:
-            label.update(f"No papers found. The search source may be unreachable or rate-limited.")
+            label.update("No papers found. The search source may be unreachable or rate-limited.")
 
     async def on_papers_updated(self, message: PapersUpdated) -> None:
         await self._refresh_library()
@@ -600,46 +303,17 @@ class PapersScreen(Vertical):
         label = self.query_one("#progress-label", Label)
         label.update(f"Distilled! Summary: {d.summary[:120]}...")
         await self._refresh_library()
-        # Re-select the distilled paper to refresh the detail panel
-        try:
-            table = self.query_one("#papers-table", DataTable)
-            for row_idx in range(table.row_count):
-                key = table.coordinate_to_cell_key((row_idx, 0))
-                if key and key.row_key.value == message.paper_id:
-                    table.move_cursor(row=row_idx)
-                    break
-        except Exception:
-            pass
+        await self._move_cursor_to_paper(message.paper_id)
 
     @on(Button.Pressed, "#view-code-btn")
     async def on_view_code(self, event: Button.Pressed) -> None:
-        table = self.query_one("#papers-table", DataTable)
-        if table.cursor_row is not None:
-            row_key = table.coordinate_to_cell_key((table.cursor_row, 0))
-            if row_key and row_key.row_key.value:
-                paper_id = str(row_key.row_key.value)
-                impls = await self.app.orchestrator.db.list_implementations(paper_id)
-                version_idx = self._impl_versions.get(paper_id, 0)
-                if 0 <= version_idx < len(impls):
-                    impl = impls[version_idx]
-                    paper = await self.app.orchestrator.db.get_paper(paper_id)
-                    if paper:
-                        from tui_agents.app.screens.code_viewer import CodeViewer
-                        await self.app.push_screen(CodeViewer(
-                            title=paper.title,
-                            code=impl.code,
-                            dependencies=impl.dependencies,
-                        ))
+        await self._view_selected_code()
 
     @on(Button.Pressed, "#run-proto-btn")
     async def on_run_prototype(self) -> None:
-        table = self.query_one("#papers-table", DataTable)
-        if table.cursor_row is None:
+        paper_id = self._selected_paper_id()
+        if not paper_id:
             return
-        row_key = table.coordinate_to_cell_key((table.cursor_row, 0))
-        if not row_key or not row_key.row_key.value:
-            return
-        paper_id = str(row_key.row_key.value)
         paper = await self.app.orchestrator.db.get_paper(paper_id)
         if not paper or paper.status != "prototyped":
             return
@@ -651,8 +325,9 @@ class PapersScreen(Vertical):
             return
 
         from pathlib import Path
-        from tui_agents.app.screens.run_modal import RunModal
+
         from tui_agents.agents.runtime_estimator import RuntimeEstimator
+        from tui_agents.app.screens.run_modal import RunModal
 
         code_dir = Path(self.app.orchestrator.config.code_dir) / paper_id / impl.id[:8]
         proto_path = code_dir / "prototype.py"
@@ -675,94 +350,26 @@ class PapersScreen(Vertical):
         )
 
         async def on_run_confirm(result: str | None) -> None:
-            if result != "start":
-                return
-
-            async def progress_cb(stage: str, msg: str, pct: float) -> None:
-                self.post_message(ProgressUpdate("benchmark", stage, msg, pct))
-
-            async def bench_worker() -> None:
-                try:
-                    bench = await self.app.orchestrator.benchmark_paper(
-                        paper_id, progress=progress_cb, impl_version_idx=version_idx,
-                    )
-                    if bench:
-                        passed = "PASSED" if bench.passed_threshold else "FAILED"
-                        self.post_message(ProgressUpdate(
-                            "benchmark", "done",
-                            f"Benchmark {passed} — {len(bench.metrics)} metrics", 1.0,
-                        ))
-                        self.post_message(PapersUpdated())
-                        await self._refresh_library()
-                except Exception as e:
-                    self.post_message(ProgressUpdate("benchmark", "error", str(e), 0))
-
-            asyncio.create_task(bench_worker())
+            if result == "start":
+                await self._start_benchmark(paper_id, version_idx)
 
         self.app.push_screen(modal, on_run_confirm)
 
     @on(Button.Pressed, "#impl-prev-btn")
     async def on_impl_prev(self) -> None:
-        table = self.query_one("#papers-table", DataTable)
-        if table.cursor_row is not None:
-            row_key = table.coordinate_to_cell_key((table.cursor_row, 0))
-            if row_key and row_key.row_key.value:
-                paper_id = str(row_key.row_key.value)
-                impls = await self.app.orchestrator.db.list_implementations(paper_id)
-                idx = self._impl_versions.get(paper_id, 0)
-                if idx > 0:
-                    self._impl_versions[paper_id] = idx - 1
-                    await self._refresh_detail_panel(paper_id)
+        await self._step_impl_version(-1)
 
     @on(Button.Pressed, "#impl-next-btn")
     async def on_impl_next(self) -> None:
-        table = self.query_one("#papers-table", DataTable)
-        if table.cursor_row is not None:
-            row_key = table.coordinate_to_cell_key((table.cursor_row, 0))
-            if row_key and row_key.row_key.value:
-                paper_id = str(row_key.row_key.value)
-                impls = await self.app.orchestrator.db.list_implementations(paper_id)
-                idx = self._impl_versions.get(paper_id, 0)
-                if idx < len(impls) - 1:
-                    self._impl_versions[paper_id] = idx + 1
-                    await self._refresh_detail_panel(paper_id)
+        await self._step_impl_version(+1)
 
     @on(Button.Pressed, "#delete-impl-btn")
     async def on_delete_impl(self) -> None:
-        table = self.query_one("#papers-table", DataTable)
-        if table.cursor_row is not None:
-            row_key = table.coordinate_to_cell_key((table.cursor_row, 0))
-            if row_key and row_key.row_key.value:
-                paper_id = str(row_key.row_key.value)
-                impls = await self.app.orchestrator.db.list_implementations(paper_id)
-                idx = self._impl_versions.get(paper_id, 0)
-                if 0 <= idx < len(impls):
-                    impl = impls[idx]
-                    await self.app.orchestrator.db.delete_implementation(impl.id)
-                    if paper_id in self._impl_versions:
-                        del self._impl_versions[paper_id]
-                    await self._refresh_detail_panel(paper_id)
-
-    async def _refresh_detail_panel(self, paper_id: str) -> None:
-        table = self.query_one("#papers-table", DataTable)
-        for row_idx in range(table.row_count):
-            key = table.coordinate_to_cell_key((row_idx, 0))
-            if key and key.row_key.value == paper_id:
-                event = type("FakeEvent", (), {"row_key": key.row_key})()
-                await self.on_row_highlighted(event)
-                break
+        await self._delete_selected_impl()
 
     async def on_implementation_ready(self, message: ImplementationReady) -> None:
         deps_str = ", ".join(message.dependencies[:3])
         label = self.query_one("#progress-label", Label)
         label.update(f"Implemented! {message.code_length} chars, deps: {deps_str}")
         await self._refresh_library()
-        try:
-            table = self.query_one("#papers-table", DataTable)
-            for row_idx in range(table.row_count):
-                key = table.coordinate_to_cell_key((row_idx, 0))
-                if key and key.row_key.value == message.paper_id:
-                    table.move_cursor(row=row_idx)
-                    break
-        except Exception:
-            pass
+        await self._move_cursor_to_paper(message.paper_id)

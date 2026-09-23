@@ -20,7 +20,6 @@ sources:
     max_results: 20
   local_pdf:
     enabled: true
-    watch_directory: "./papers"
 
 github:
   enabled: true
@@ -57,12 +56,10 @@ pipeline:
     - prototyper
     - benchmarker
   benchmark:
-    iterations: 3
     pass_threshold: 0.7
   loop:
     max_iterations: 5
 
 ui:
-  theme: "dark"
-  refresh_interval: 2.0
+  refresh_interval: 5.0
   log_level: "INFO"

@@ -1,34 +1,3 @@
-COLLECTOR_TOOLS = [
-    {
-        "type": "function",
-        "function": {
-            "name": "search_papers",
-            "description": "Search for research papers on a given topic using available sources",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "query": {
-                        "type": "string",
-                        "description": "Search query for papers (e.g., 'diffusion models optimal transport')",
-                    },
-                    "max_results": {
-                        "type": "integer",
-                        "description": "Maximum number of results to return",
-                        "default": 20,
-                    },
-                    "source": {
-                        "type": "string",
-                        "enum": ["arxiv", "semantic_scholar", "all"],
-                        "description": "Source to search",
-                        "default": "all",
-                    },
-                },
-                "required": ["query"],
-            },
-        },
-    },
-]
-
 DISTILLER_TOOLS = [
     {
         "type": "function",
@@ -134,38 +103,6 @@ PROTOTYPER_TOOLS = [
                     },
                 },
                 "required": ["script", "requirements", "usage_instructions"],
-            },
-        },
-    },
-]
-
-BENCHMARKER_TOOLS = [
-    {
-        "type": "function",
-        "function": {
-            "name": "save_benchmark",
-            "description": "Save benchmark results for an implementation",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "metrics": {
-                        "type": "object",
-                        "description": "Dictionary of metric names to values",
-                    },
-                    "compared_to_baseline": {
-                        "type": "boolean",
-                        "description": "Whether results were compared against a baseline",
-                    },
-                    "passed_threshold": {
-                        "type": "boolean",
-                        "description": "Whether results passed the quality threshold",
-                    },
-                    "analysis": {
-                        "type": "string",
-                        "description": "Analysis of benchmark results and suggestions for improvement",
-                    },
-                },
-                "required": ["metrics", "analysis"],
             },
         },
     },

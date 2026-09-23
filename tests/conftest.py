@@ -69,6 +69,39 @@ async def test_llm(tmp_config: Config) -> LLMClient:
     return LLMClient(tmp_config)
 
 
+@pytest.fixture
+def mock_llm(test_llm: LLMClient):
+    """LLMClient whose chat_structured returns queued canned responses.
+
+    Usage:
+        llm = mock_llm
+        llm.queue({"summary": "...", ...})   # next chat_structured() call
+        # or set llm.default_response = {...}
+    """
+    from collections import deque
+
+    responses: deque = deque()
+    test_llm.default_response = {"ok": True}
+
+    async def fake_chat_structured(
+        system_prompt, user_prompt, response_schema, temperature=None, max_tokens=None
+    ):
+        if responses:
+            return responses.popleft()
+        return test_llm.default_response
+
+    async def fake_chat(messages, tools=None, tool_choice="auto", temperature=None, max_tokens=None):
+        from tui_agents.llm.client import LLMResponse
+        if responses:
+            return LLMResponse(content=responses.popleft())
+        return LLMResponse(content="{}")
+
+    test_llm.queue = responses.append
+    test_llm.chat_structured = fake_chat_structured
+    test_llm.chat = fake_chat
+    return test_llm
+
+
 @pytest_asyncio.fixture
 async def test_orchestrator(
     tmp_config: Config, test_db: Database, test_vector_store: VectorStore, test_llm: LLMClient

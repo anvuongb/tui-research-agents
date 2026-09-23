@@ -11,7 +11,7 @@ from tui_agents.agents.runner import DockerRunner, RunResult
 from tui_agents.agents.runtime_estimator import RuntimeEstimator
 from tui_agents.llm.client import LLMClient
 from tui_agents.storage.database import Database
-from tui_agents.storage.models import BenchmarkResult, Implementation, StageStatus
+from tui_agents.storage.models import BenchmarkResult, Implementation
 from tui_agents.storage.vector_store import VectorStore
 from tui_agents.utils.config import Config
 
@@ -106,11 +106,17 @@ class BenchmarkerAgent(BaseAgent):
             bench_dir.mkdir(parents=True, exist_ok=True)
             (bench_dir / "benchmark.py").write_text(benchmark_script)
             (bench_dir / "prototype.py").write_text(prototype_code)
+            req_src = impl_dir / "requirements.txt"
+            if req_src.exists():
+                (bench_dir / "requirements.txt").write_text(req_src.read_text())
+            else:
+                deps = implementation.dependencies or []
+                (bench_dir / "requirements.txt").write_text("\n".join(deps))
 
             if progress:
                 await progress("building", "Building Docker image...", 0.25)
 
-            result = await self._runner.run(bench_dir, progress=progress)
+            result = await self._runner.run(bench_dir, progress=progress, entrypoint="benchmark.py")
 
             metrics = self._parse_metrics(result.stdout)
 
@@ -128,6 +134,7 @@ class BenchmarkerAgent(BaseAgent):
                 metrics=metrics,
                 compared_to_baseline=False,
                 passed_threshold=passed,
+                analysis=analysis,
                 created_at=datetime.now().isoformat(),
             )
 
